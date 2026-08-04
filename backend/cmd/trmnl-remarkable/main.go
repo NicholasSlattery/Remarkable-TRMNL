@@ -25,6 +25,7 @@ import (
 	"trmnl-remarkable/backend/internal/brightness"
 	"trmnl-remarkable/backend/internal/cache"
 	"trmnl-remarkable/backend/internal/config"
+	"trmnl-remarkable/backend/internal/power"
 	"trmnl-remarkable/backend/internal/protocol"
 	"trmnl-remarkable/backend/internal/trmnl"
 )
@@ -72,12 +73,15 @@ type app struct {
 	client                           *trmnl.Client
 	cache                            cache.Store
 	light                            *brightness.Device
+	wake                             *power.RTC
 	history                          []historyEntry
 	triggers                         chan trigger
 	ctx                              context.Context
 	cancel                           context.CancelFunc
 	restoreOnce                      sync.Once
 	guardDisarm                      string
+	nextRefresh                      time.Time
+	wakeAlarmError                   string
 }
 
 func main() {
@@ -141,6 +145,11 @@ func main() {
 		}
 	} else {
 		log.Printf("frontlight unavailable: %v", e)
+	}
+	if rtc, e := power.Discover("/sys/class/rtc"); e == nil {
+		a.wake = rtc
+	} else {
+		log.Printf("scheduled wake unavailable: %v", e)
 	}
 	sigs := make(chan os.Signal, 2)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -315,7 +324,7 @@ func (a *app) scheduler() {
 			if refresh < min {
 				refresh = min
 			}
-			resetTimer(timer, refresh)
+			a.scheduleNext(timer, refresh)
 		case <-timer.C:
 			ok, refresh := a.fetch(trigger{advance: true, reason: "scheduled"})
 			if ok {
@@ -332,7 +341,7 @@ func (a *app) scheduler() {
 			if refresh < min {
 				refresh = min
 			}
-			resetTimer(timer, refresh)
+			a.scheduleNext(timer, refresh)
 		case <-a.ctx.Done():
 			return
 		}
@@ -443,8 +452,16 @@ func (a *app) sendState() {
 	a.mu.RLock()
 	cfg := config.Redacted(a.cfg)
 	hasKey := a.cfg.APIKey != ""
+	nextRefresh := a.nextRefresh
+	wakeAlarmError := a.wakeAlarmError
 	a.mu.RUnlock()
-	state := map[string]any{"config": cfg, "api_key_configured": hasKey, "version": version, "battery_percent": readBatteryPercent()}
+	state := map[string]any{"config": cfg, "api_key_configured": hasKey, "version": version, "battery_percent": readBatteryPercent(), "wake_for_refresh_available": a.wake != nil}
+	if !nextRefresh.IsZero() {
+		state["next_refresh"] = nextRefresh
+	}
+	if wakeAlarmError != "" {
+		state["wake_alarm_error"] = wakeAlarmError
+	}
 	if a.light != nil {
 		if _, err := a.light.Read(); err == nil {
 			state["brightness"] = a.light
@@ -539,6 +556,11 @@ func (a *app) cleanup() {
 		}
 		if a.guardDisarm != "" {
 			_ = os.WriteFile(a.guardDisarm, []byte("ok\n"), 0600)
+		}
+		if a.wake != nil {
+			if err := a.wake.Clear(); err != nil {
+				log.Printf("RTC wake alarm clear failed: %v", err)
+			}
 		}
 		a.cancel()
 	})
@@ -683,6 +705,36 @@ func resetTimer(t *time.Timer, d time.Duration) {
 		}
 	}
 	t.Reset(d)
+}
+
+func (a *app) scheduleNext(timer *time.Timer, d time.Duration) {
+	resetTimer(timer, d)
+	next := time.Now().Add(d).Truncate(time.Second)
+	a.mu.Lock()
+	a.nextRefresh = next
+	wakeEnabled := a.cfg.WakeForRefresh
+	a.wakeAlarmError = ""
+	a.mu.Unlock()
+
+	if a.wake != nil {
+		var err error
+		if wakeEnabled {
+			err = a.wake.Set(next)
+		} else {
+			err = a.wake.Clear()
+		}
+		if err != nil {
+			log.Printf("RTC wake alarm update failed: %v", err)
+			a.mu.Lock()
+			a.wakeAlarmError = safeError(err)
+			a.mu.Unlock()
+		}
+	} else if wakeEnabled {
+		a.mu.Lock()
+		a.wakeAlarmError = "This firmware does not expose a writable RTC wake alarm"
+		a.mu.Unlock()
+	}
+	a.sendState()
 }
 
 func atomicJSON(path string, v any, mode os.FileMode) {

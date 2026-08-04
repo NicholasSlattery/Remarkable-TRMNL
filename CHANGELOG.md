@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0 - 2026-08-04
+
+- Redraw and refresh the dashboard after opening or closing controls, settings,
+  diagnostics, and after resume so e-ink overlays cannot remain stuck.
+- Request a native full-panel e-ink cleanup after every overlay transition and
+  every five seconds while a menu is open, with a black/white fallback cycle.
+- Add complete front-light controls to the Settings page.
+- Add capability-detected RTC wake scheduling for battery-friendly refreshes
+  across normal Paper Pro suspend cycles.
+
 All notable changes are documented here. This project follows semantic
 versioning.
 

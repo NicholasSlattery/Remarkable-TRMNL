@@ -27,6 +27,7 @@ type Config struct {
 	BrightnessPercent       int    `json:"brightness_percent"`
 	StartWithCacheOffline   bool   `json:"start_with_cache_offline"`
 	AlwaysOn                bool   `json:"always_on"`
+	WakeForRefresh          bool   `json:"wake_for_refresh"`
 	LoggingLevel            string `json:"logging_level"`
 	HistoryLimit            int    `json:"history_limit"`
 }
@@ -36,7 +37,8 @@ func Defaults() Config {
 		BaseURL: DefaultBaseURL, RefreshMode: "server", MinimumRefreshSeconds: 60,
 		FitMode: "fit", Orientation: "auto", UseSystemBrightness: true,
 		RestoreBrightnessOnExit: true, BrightnessPercent: 50,
-		StartWithCacheOffline: true, LoggingLevel: "info", HistoryLimit: 30,
+		StartWithCacheOffline: true, WakeForRefresh: true,
+		LoggingLevel: "info", HistoryLimit: 30,
 	}
 }
 

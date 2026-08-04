@@ -14,7 +14,7 @@ Rectangle {
         base_url: "https://trmnl.com", fit_mode: "fit", orientation: "auto",
         minimum_refresh_seconds: 60, restore_brightness_on_exit: true,
         use_system_brightness: true, brightness_percent: 50,
-        start_with_cache_offline: true, logging_level: "info"
+        start_with_cache_offline: true, wake_for_refresh: true, logging_level: "info"
     })
     property string dashboardSource: ""
     property string statusText: "Starting…"
@@ -23,6 +23,8 @@ Rectangle {
     property bool settingsVisible: false
     property bool apiKeyConfigured: false
     property bool initialized: false
+    property string pendingDashboardSource: ""
+    property int cleaningPhase: 0
 
     function unloading() { endpoint.terminate() }
     function fitValue() {
@@ -40,11 +42,12 @@ Rectangle {
             fit_mode: fitMode.currentText.toLowerCase(),
             orientation: orientation.currentText.toLowerCase(),
             invert: invertMode.checked,
-            use_system_brightness: useSystemBrightness.checked,
+            use_system_brightness: settingsUseSystemBrightness.checked,
             restore_brightness_on_exit: restoreBrightness.checked,
-            brightness_percent: Math.round(brightness.value),
+            brightness_percent: Math.round(settingsBrightness.value),
             start_with_cache_offline: startCached.checked,
             always_on: false,
+            wake_for_refresh: wakeForRefresh.checked,
             logging_level: logLevel.currentText.toLowerCase(),
             history_limit: 30
         }
@@ -53,7 +56,12 @@ Rectangle {
         appState = s
         appConfig = s.config || appConfig
         apiKeyConfigured = !!s.api_key_configured
-        if (s.brightness_percent !== undefined) brightness.value = s.brightness_percent
+        if (s.brightness_percent !== undefined) {
+            brightness.value = s.brightness_percent
+            settingsBrightness.value = s.brightness_percent
+        }
+        useSystemBrightness.checked = !!appConfig.use_system_brightness
+        settingsUseSystemBrightness.checked = !!appConfig.use_system_brightness
         if (!apiKeyConfigured && !appConfig.device_id) settingsVisible = true
     }
     function configureFields() {
@@ -67,9 +75,97 @@ Rectangle {
         orientation.currentIndex = c.orientation === "portrait" ? 1 : (c.orientation === "landscape" ? 2 : 0)
         invertMode.checked = !!c.invert
         useSystemBrightness.checked = !!c.use_system_brightness
+        settingsUseSystemBrightness.checked = !!c.use_system_brightness
+        settingsBrightness.value = c.brightness_percent === undefined ? 50 : c.brightness_percent
+        brightness.value = settingsBrightness.value
         restoreBrightness.checked = c.restore_brightness_on_exit !== false
         startCached.checked = c.start_with_cache_offline !== false
+        wakeForRefresh.checked = c.wake_for_refresh !== false
         logLevel.currentIndex = c.logging_level === "debug" ? 1 : (c.logging_level === "warning" ? 2 : 0)
+    }
+    function redrawDashboard(fetchLatest) {
+        if (dashboardSource !== "") {
+            pendingDashboardSource = dashboardSource
+            dashboardSource = ""
+            dashboardRedraw.restart()
+        }
+        if (fetchLatest) overlayRefresh.restart()
+    }
+    function requestNativeFullRefresh() {
+        // AppLoad owns the framebuffer controller above this loaded component.
+        // Its signal is the same full-panel refresh used by the five-finger
+        // cleanup gesture. Locate it without depending on private object IDs.
+        var cursor = root.parent
+        for (var depth = 0; cursor && depth < 8; ++depth) {
+            var children = cursor.children || []
+            for (var i = 0; i < children.length; ++i) {
+                var candidate = children[i]
+                if (candidate && candidate.requestFullRefresh !== undefined
+                        && candidate.refreshMode !== undefined) {
+                    candidate.requestFullRefresh()
+                    return true
+                }
+            }
+            cursor = cursor.parent
+        }
+        return false
+    }
+    function cleanScreen(fetchLatest) {
+        redrawDashboard(fetchLatest)
+        panelRefreshDelay.restart()
+    }
+    function fallbackCleanScreen() {
+        cleaningPhase = 1
+        cleaningFlashTimer.restart()
+    }
+    function showControls(show) {
+        controlsVisible = show
+        if (show) settingsVisible = false
+        cleanScreen(true)
+    }
+    function showSettings(show) {
+        if (show) configureFields()
+        settingsVisible = show
+        controlsVisible = false
+        cleanScreen(true)
+    }
+
+    Timer {
+        id: dashboardRedraw
+        interval: 80
+        onTriggered: {
+            root.dashboardSource = root.pendingDashboardSource
+            root.pendingDashboardSource = ""
+        }
+    }
+    Timer { id: overlayRefresh; interval: 350; onTriggered: endpoint.sendMessage(4, "") }
+    Timer {
+        id: panelRefreshDelay
+        interval: 140
+        onTriggered: {
+            if (!root.requestNativeFullRefresh()) root.fallbackCleanScreen()
+        }
+    }
+    Timer {
+        id: menuCleanupTimer
+        interval: 5000
+        repeat: true
+        running: root.controlsVisible || root.settingsVisible || diagnosticsPopup.visible
+        onTriggered: root.cleanScreen(false)
+    }
+    Timer {
+        id: cleaningFlashTimer
+        interval: 220
+        repeat: true
+        onTriggered: {
+            if (root.cleaningPhase === 1) {
+                root.cleaningPhase = 2
+            } else {
+                root.cleaningPhase = 0
+                stop()
+                root.redrawDashboard(false)
+            }
+        }
     }
 
     AppLoad {
@@ -80,8 +176,11 @@ Rectangle {
             try { data = JSON.parse(contents || "{}") } catch (e) { root.statusText = "Invalid backend message"; return }
             if (type === 101) { root.applyState(data); if (!root.initialized) { root.configureFields(); root.initialized = true } }
             else if (type === 102) {
+                dashboardRedraw.stop()
                 root.dashboardSource = ""
-                root.dashboardSource = data.path
+                root.pendingDashboardSource = data.path
+                dashboardRedraw.restart()
+                panelRefreshDelay.restart()
                 root.offline = !!data.cached
             } else if (type === 103) { root.statusText = data.message || ""; root.offline = false }
             else if (type === 104) { root.statusText = data.message || "Error"; root.offline = true }
@@ -101,7 +200,13 @@ Rectangle {
         target: Qt.application
         function onStateChanged() {
             // qmllint disable missing-property
-            if (Qt.application.state === Qt.ApplicationActive) endpoint.sendMessage(10, "")
+            if (Qt.application.state === Qt.ApplicationActive) {
+                root.controlsVisible = false
+                root.settingsVisible = false
+                diagnosticsPopup.close()
+                root.cleanScreen(false)
+                endpoint.sendMessage(10, "")
+            }
             // qmllint enable missing-property
         }
     }
@@ -145,7 +250,7 @@ Rectangle {
         anchors.right: parent.right; anchors.top: parent.top; width: 112; height: 112
         color: root.controlsVisible ? "#dddddd" : "transparent"; opacity: root.controlsVisible ? 1 : 0.15
         Text { anchors.centerIn: parent; text: "Menu"; font.pixelSize: 18; font.bold: true; color: "#111" }
-        MouseArea { anchors.fill: parent; onClicked: { root.controlsVisible = !root.controlsVisible; if (root.controlsVisible) root.settingsVisible = false } }
+        MouseArea { anchors.fill: parent; onClicked: root.showControls(!root.controlsVisible) }
     }
 
     Item {
@@ -182,7 +287,7 @@ Rectangle {
                 Row {
                     width: parent.width
                     Text { text: "TRMNL controls"; font.pixelSize: 38; font.bold: true; width: parent.width - 100 }
-                    Button { text: "×"; width: 84; height: 70; font.pixelSize: 34; onClicked: root.controlsVisible = false }
+                    Button { text: "×"; width: 84; height: 70; font.pixelSize: 34; onClicked: root.showControls(false) }
                 }
                 Text { text: root.statusText; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 23; color: root.offline ? "#7a1515" : "#222" }
                 Row {
@@ -194,10 +299,10 @@ Rectangle {
                 Slider {
                     id: brightness; width: parent.width; height: 78; from: 0; to: 100; stepSize: 1
                     enabled: root.appState.brightness !== undefined && !useSystemBrightness.checked
-                    onMoved: brightnessDebounce.restart()
+                    onMoved: { settingsBrightness.value = value; brightnessDebounce.restart() }
                 }
                 Timer { id: brightnessDebounce; interval: 250; onTriggered: endpoint.sendMessage(6, JSON.stringify({percent:Math.round(brightness.value)})) }
-                CheckBox { id: useSystemBrightness; text: "Use system brightness"; font.pixelSize: 24; onClicked: endpoint.sendMessage(13, JSON.stringify({use_system_brightness:checked})) }
+                CheckBox { id: useSystemBrightness; text: "Use system brightness"; font.pixelSize: 24; onClicked: { settingsUseSystemBrightness.checked = checked; endpoint.sendMessage(13, JSON.stringify({use_system_brightness:checked})) } }
                 Row {
                     spacing: 14
                     Button { text: "Refresh now"; width: 220; height: 78; font.pixelSize: 23; onClicked: endpoint.sendMessage(4, "") }
@@ -207,8 +312,8 @@ Rectangle {
                 CheckBox { text: "Dark / invert image"; checked: !!root.appConfig.invert; font.pixelSize: 24; onClicked: endpoint.sendMessage(13, JSON.stringify({invert:checked})) }
                 Row {
                     spacing: 14
-                    Button { text: "Settings"; width: 220; height: 78; font.pixelSize: 23; onClicked: { root.configureFields(); root.settingsVisible = true; root.controlsVisible = false } }
-                    Button { text: "Diagnostics"; width: 220; height: 78; font.pixelSize: 23; onClicked: { endpoint.sendMessage(8, ""); diagnosticsPopup.open() } }
+                    Button { text: "Settings"; width: 220; height: 78; font.pixelSize: 23; onClicked: root.showSettings(true) }
+                    Button { text: "Diagnostics"; width: 220; height: 78; font.pixelSize: 23; onClicked: { root.cleanScreen(true); endpoint.sendMessage(8, ""); diagnosticsPopup.open() } }
                 }
                 Button { text: "Return to reMarkable"; width: parent.width; height: 92; font.pixelSize: 27; font.bold: true; onClicked: root.close() }
                 Text { text: "Refresh history"; font.pixelSize: 28; font.bold: true }
@@ -235,7 +340,7 @@ Rectangle {
             anchors.fill: parent; anchors.margins: 34; contentHeight: settingsColumn.implicitHeight + 40; clip: true
             Column {
                 id: settingsColumn; width: parent.width; spacing: 18
-                Row { width: parent.width; Text { text: "TRMNL setup & settings"; font.pixelSize: 38; font.bold: true; width: parent.width - 120 } Button { text: "×"; width: 84; height: 70; font.pixelSize: 34; onClicked: root.settingsVisible = false } }
+                Row { width: parent.width; Text { text: "TRMNL setup & settings"; font.pixelSize: 38; font.bold: true; width: parent.width - 120 } Button { text: "×"; width: 84; height: 70; font.pixelSize: 34; onClicked: root.showSettings(false) } }
                 Text { text: root.apiKeyConfigured ? "API key configured. Leave blank to keep it, or enter a replacement." : "Enter your TRMNL Device API key."; font.pixelSize: 21; width: parent.width; wrapMode: Text.Wrap }
                 TextField { id: apiKey; width: parent.width; height: 68; echoMode: TextInput.Password; placeholderText: "TRMNL Device API key"; font.pixelSize: 23 }
                 ComboBox { id: serverMode; width: parent.width; height: 68; model: ["TRMNL cloud", "Custom BYOS server"]; font.pixelSize: 23 }
@@ -244,11 +349,35 @@ Rectangle {
                 Row { spacing: 18; width: parent.width; Text { text: "Minimum refresh seconds"; width: 330; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter } TextField { id: minRefresh; width: 200; height: 64; inputMethodHints: Qt.ImhDigitsOnly; font.pixelSize: 22 } }
                 Row { spacing: 18; Text { text: "Image fit"; width: 180; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter } ComboBox { id: fitMode; width: 240; height: 64; model: ["Fit", "Fill", "Stretch"]; font.pixelSize: 22 } Text { text: "Orientation"; width: 180; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter } ComboBox { id: orientation; width: 240; height: 64; model: ["Auto", "Portrait", "Landscape"]; font.pixelSize: 22 } }
                 CheckBox { id: invertMode; text: "Dark / invert image"; font.pixelSize: 22 }
+                Text { text: "Front light  " + Math.round(settingsBrightness.value) + "%"; font.pixelSize: 24; font.bold: true }
+                Slider {
+                    id: settingsBrightness; width: parent.width; height: 76; from: 0; to: 100; stepSize: 1
+                    enabled: root.appState.brightness !== undefined && !settingsUseSystemBrightness.checked
+                    onMoved: { brightness.value = value; settingsBrightnessDebounce.restart() }
+                }
+                Timer { id: settingsBrightnessDebounce; interval: 250; onTriggered: endpoint.sendMessage(6, JSON.stringify({percent:Math.round(settingsBrightness.value)})) }
+                CheckBox {
+                    id: settingsUseSystemBrightness; text: "Use the reMarkable system front-light level"; font.pixelSize: 22
+                    onClicked: { useSystemBrightness.checked = checked; endpoint.sendMessage(13, JSON.stringify({use_system_brightness:checked})) }
+                }
                 CheckBox { id: restoreBrightness; text: "Restore previous brightness when exiting"; font.pixelSize: 22 }
                 CheckBox { id: startCached; text: "Start with cached screen when offline"; font.pixelSize: 22 }
+                CheckBox { id: wakeForRefresh; text: "Sleep between updates and wake for refresh"; font.pixelSize: 22 }
+                Text {
+                    width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 19; color: root.appState.wake_alarm_error ? "#7a1515" : "#444"
+                    text: !root.appState.wake_for_refresh_available
+                          ? "Scheduled wake is unavailable on this firmware. TRMNL will still refresh whenever the tablet is awake."
+                          : (root.appState.wake_alarm_error
+                             ? "Scheduled wake error: " + root.appState.wake_alarm_error
+                             : "Recommended: the e-ink image remains visible with almost no power while the tablet sleeps. TRMNL wakes at the next refresh interval, updates, and schedules the following wake-up. A manual shutdown or empty battery still requires a normal power-on.")
+                }
+                Text {
+                    visible: !!root.appState.next_refresh; width: parent.width; font.pixelSize: 19; color: "#444"
+                    text: "Next refresh  " + (root.appState.next_refresh ? new Date(root.appState.next_refresh).toLocaleString(Qt.locale(), Locale.ShortFormat) : "after settings are saved")
+                }
                 Row { spacing: 18; Text { text: "Logging"; width: 180; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter } ComboBox { id: logLevel; width: 240; height: 64; model: ["Info", "Debug", "Warning"]; font.pixelSize: 22 } }
                 Text { id: testResult; width: parent.width; font.pixelSize: 21; wrapMode: Text.Wrap }
-                Row { spacing: 14; Button { text: "Test connection"; width: 240; height: 78; font.pixelSize: 22; onClicked: { testResult.text = "Testing…"; endpoint.sendMessage(3, JSON.stringify(root.configFromFields())) } } Button { text: "Save"; width: 190; height: 78; font.pixelSize: 22; onClicked: { endpoint.sendMessage(2, JSON.stringify(root.configFromFields())); root.settingsVisible = false } } Button { text: "Clear cache"; width: 190; height: 78; font.pixelSize: 22; onClicked: endpoint.sendMessage(7, "") } Button { text: "Reset"; width: 150; height: 78; font.pixelSize: 22; onClicked: endpoint.sendMessage(11, "") } }
+                Row { spacing: 14; Button { text: "Test connection"; width: 240; height: 78; font.pixelSize: 22; onClicked: { testResult.text = "Testing…"; endpoint.sendMessage(3, JSON.stringify(root.configFromFields())) } } Button { text: "Save"; width: 190; height: 78; font.pixelSize: 22; onClicked: { endpoint.sendMessage(2, JSON.stringify(root.configFromFields())); root.showSettings(false) } } Button { text: "Clear cache"; width: 190; height: 78; font.pixelSize: 22; onClicked: endpoint.sendMessage(7, "") } Button { text: "Reset"; width: 150; height: 78; font.pixelSize: 22; onClicked: endpoint.sendMessage(11, "") } }
                 Text { text: "Uninstall: /home/root/trmnl-remarkable/uninstall.sh\nRecovery: /home/root/trmnl-remarkable/recover-stock.sh\nRecovery tools: /home/root/trmnl-remarkable"; font.pixelSize: 19; width: parent.width; wrapMode: Text.Wrap; color: "#444" }
             }
         }
@@ -256,8 +385,17 @@ Rectangle {
 
     Popup {
         id: diagnosticsPopup; modal: true; focus: true; x: root.width*0.08; y: root.height*0.08; width: root.width*0.84; height: root.height*0.84
+        onClosed: root.cleanScreen(true)
         background: Rectangle { color: "#f4f2eb"; border.width: 3 }
         contentItem: Column { spacing: 12; Text { text: "Diagnostics"; font.pixelSize: 30; font.bold: true } ScrollView { width: parent.width; height: parent.height - 100; TextArea { id: diagnosticsText; readOnly: true; wrapMode: Text.Wrap; font.pixelSize: 17 } } Button { text: "Close"; width: 180; height: 64; onClicked: diagnosticsPopup.close() } }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        z: 10000
+        visible: root.cleaningPhase !== 0
+        color: root.cleaningPhase === 1 ? "#000000" : "#ffffff"
+        MouseArea { anchors.fill: parent }
     }
 
     ListModel { id: historyModel }

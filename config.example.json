@@ -12,6 +12,7 @@
   "brightness_percent": 50,
   "start_with_cache_offline": true,
   "always_on": false,
+  "wake_for_refresh": true,
   "logging_level": "info",
   "history_limit": 30
 }

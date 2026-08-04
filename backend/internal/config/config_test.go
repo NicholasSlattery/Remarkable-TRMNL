@@ -33,6 +33,12 @@ func TestSaveLoadAndPermissions(t *testing.T) {
 	}
 }
 
+func TestDefaultsEnableScheduledWake(t *testing.T) {
+	if !Defaults().WakeForRefresh {
+		t.Fatal("scheduled wake should be enabled by default")
+	}
+}
+
 func TestRejectsBadURL(t *testing.T) {
 	c := Defaults()
 	c.BaseURL = "example.test"

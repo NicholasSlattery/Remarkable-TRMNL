@@ -10,7 +10,7 @@ interface.
 
 ## Install without a terminal
 
-1. Download `TRMNL-for-reMarkable-1.0.0-Windows-x64.zip` from Releases.
+1. Download `TRMNL-for-reMarkable-1.1.0-Windows-x64.zip` from Releases.
 2. Extract the ZIP and double-click **TRMNL Installer.exe**.
 3. Connect the Paper Pro by USB, enable SSH/developer access in the tablet's
    settings, and paste the password shown by the tablet.
@@ -42,8 +42,10 @@ The API key is masked, stored in an owner-only `0600` file, omitted from logs,
 and never returned to the frontend after saving.
 
 Use the upper-right hotspot for refresh, next/previous screen, inversion,
-brightness, history, and diagnostics. Return to reMarkable with the normal
-AppLoad center-top downward swipe, the **Return to reMarkable** button, or a
+brightness, scheduled wake, history, and diagnostics. The dashboard redraws and
+checks for an update whenever controls or settings are opened or closed, so an
+overlay cannot remain ghosted on the e-ink panel. Return to reMarkable with the
+normal AppLoad center-top downward swipe, the **Return to reMarkable** button, or a
 two-second hold in the upper-left corner.
 
 ## Important behavior and limitations
@@ -53,8 +55,13 @@ two-second hold in the upper-left corner.
   if you are an advanced user, to reactivate AppLoad.
 - “Auto” orientation follows content layout; the Paper Pro does not expose a
   reliable physical auto-rotation signal to this application.
-- `always_on` is retained for configuration compatibility but does not override
-  the tablet's global suspend policy.
+- **Sleep between updates and wake for refresh** is enabled by default. When the
+  firmware exposes a writable RTC wake alarm, TRMNL programs it for the next
+  server-provided refresh interval. The e-ink image remains visible while the
+  tablet uses its normal suspend behavior; on resume TRMNL refreshes immediately.
+  Settings reports clearly when scheduled wake is unavailable.
+- `always_on` is retained for configuration compatibility. TRMNL does not disable
+  the tablet's safety-critical global power policy or force Linux to suspend.
 - Production TRMNL authentication and monochrome cloud output were tested.
   Full-color rendering was tested on the physical panel with the compatible
   mock server; an active real-cloud color plugin should be rechecked for every
