@@ -58,3 +58,39 @@ func TestRejectsInsecureRemoteURL(t *testing.T) {
 		t.Fatalf("loopback mock URL should remain available: %v", err)
 	}
 }
+
+func TestRejectsUnsafeServerURLFeatures(t *testing.T) {
+	for _, raw := range []string{
+		"https://user:secret@example.test",
+		"https://example.test/trmnl",
+		"https://example.test?token=secret",
+		"https://example.test/#fragment",
+	} {
+		c := Defaults()
+		c.BaseURL = raw
+		if err := c.Normalize(); err == nil {
+			t.Fatalf("Normalize accepted unsafe server URL %q", raw)
+		}
+	}
+}
+
+func TestValidateRemoteURLAllowsHTTPSImagesAndLoopbackMock(t *testing.T) {
+	for _, raw := range []string{
+		"https://cdn.example.test/screens/a.png?token=opaque",
+		"http://127.0.0.1:9988/image/test.png",
+		"http://[::1]:9988/image/test.png",
+	} {
+		if err := ValidateRemoteURL(raw); err != nil {
+			t.Fatalf("ValidateRemoteURL(%q): %v", raw, err)
+		}
+	}
+	for _, raw := range []string{
+		"http://192.168.1.20/image.png",
+		"ftp://example.test/image.png",
+		"//example.test/image.png",
+	} {
+		if err := ValidateRemoteURL(raw); err == nil {
+			t.Fatalf("ValidateRemoteURL accepted %q", raw)
+		}
+	}
+}

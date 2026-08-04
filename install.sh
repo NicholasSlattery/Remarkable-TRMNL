@@ -19,7 +19,10 @@ case "$os_version" in 3.26.*|3.27.*) ;; *) echo "Refusing installation: unsuppor
 
 [ -d /home/root/xovi ] || { echo "Compatible XOVI is not installed; inspect OS compatibility before installing it." >&2; exit 21; }
 [ -d "$APP_ROOT" ] || { echo "AppLoad application directory is missing: $APP_ROOT" >&2; exit 22; }
-[ -f "$APP_SOURCE/manifest.json" ] && [ -f "$APP_SOURCE/resources.rcc" ] && [ -x "$APP_SOURCE/backend/entry" ] || { echo "Built AppLoad bundle is incomplete" >&2; exit 23; }
+if ! { [ -f "$APP_SOURCE/manifest.json" ] && [ -f "$APP_SOURCE/resources.rcc" ] && [ -x "$APP_SOURCE/backend/entry" ]; }; then
+  echo "Built AppLoad bundle is incomplete" >&2
+  exit 23
+fi
 
 free_kb=$(df -Pk /home/root | awk 'NR==2 {print $4}')
 [ "${free_kb:-0}" -ge 51200 ] || { echo "At least 50 MiB free under /home/root is required" >&2; exit 24; }

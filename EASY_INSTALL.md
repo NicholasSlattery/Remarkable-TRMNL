@@ -4,47 +4,67 @@ No command line is required.
 
 ## Before you begin
 
-- Use a reMarkable Paper Pro running firmware 3.26.x or 3.27.x.
-- Charge it above 20% and keep it connected during installation.
-- In the tablet settings, enable developer/SSH access and display its SSH
-  password. The exact menu wording can vary by firmware.
-- Connect the tablet directly to the Windows computer with its USB cable.
+> **Developer Mode erases the tablet.** Confirm every document is synced or
+> exported before enabling it. Developer Mode reduces security and issues caused
+> by it may not be covered by reMarkable warranty/support. Uninstalling TRMNL
+> does not disable Developer Mode; leaving it requires official software recovery.
+
+1. Confirm this is a reMarkable Paper Pro on firmware 3.26.x or 3.27.x.
+2. Read reMarkable's [Developer Mode article](https://support.remarkable.com/s/article/Developer-mode).
+3. Sync/export your documents, enable Developer Mode, complete the reset and
+   onboarding, then display the tablet's SSH password.
+4. Charge above 20% and connect the tablet directly to Windows by USB.
+5. If using TRMNL cloud, complete [BYOD_SETUP.md](BYOD_SETUP.md).
+
+## Verify the download
+
+Download the ZIP and `SHA256SUMS.txt` from the same GitHub Release. In PowerShell:
+
+```powershell
+Get-FileHash .\TRMNL-for-reMarkable-1.1.0-Windows-x64.zip -Algorithm SHA256
+```
+
+The value must exactly match `SHA256SUMS.txt`. Extract the entire ZIP; do not run
+the installer from inside the archive.
 
 ## Install
 
-1. Extract the downloaded release ZIP.
-2. Double-click **TRMNL Installer.exe**. Keep the `payload` folder beside it.
-3. Leave the tablet address as `10.11.99.1` for USB. Paste the SSH password.
-4. Click **Find my tablet**.
-5. Check that the window says **reMarkable Ferrari** and shows supported
-   firmware. Confirm the SSH fingerprint.
-6. Click **Install TRMNL** and keep the cable connected until it succeeds.
-7. On the tablet, open AppLoad and tap TRMNL.
+1. Double-click **TRMNL Installer.exe** with the `payload` folder beside it.
+2. Leave `10.11.99.1` for USB and paste the current SSH password.
+3. Click **Find my tablet**.
+4. Confirm **reMarkable Ferrari**, supported firmware, and the SSH fingerprint.
+5. Click **Install TRMNL** and leave the cable connected until success.
+6. On the tablet, open **AppLoad**, tap **TRMNL**, then configure the Device API
+   key in Settings.
 
-The password is held only in installer memory. It is not saved or logged.
+The password exists only in browser memory for this local installer session. It
+is not written to disk or logged. The installer listens only on `127.0.0.1`.
 
 ## If the tablet is not found
 
-- Wake and unlock the tablet.
-- Reconnect the USB cable directly rather than through a hub.
-- Confirm SSH/developer access remains enabled.
-- Copy the current password again; the tablet may generate a new one.
-- If using Wi-Fi, replace `10.11.99.1` with the tablet's local IP address.
+- Wake/unlock it and reconnect directly rather than through a hub.
+- Confirm Developer Mode and SSH access remain enabled.
+- Copy the current password again; it can change after reset/recovery.
+- For Wi-Fi, replace `10.11.99.1` with the tablet's local IP.
+- Do not bypass an unexpected host fingerprint. Reconnect over USB and verify it.
 
-## Recovery and uninstall
+## After reboot, recovery, and uninstall
 
-Run **TRMNL Installer.exe**, find the tablet, and confirm its fingerprint:
+Run the installer, click **Find my tablet**, and verify the fingerprint:
 
-- **Restore stock interface** disables TRMNL and restarts the normal interface
-  without deleting settings.
-- **Uninstall TRMNL** removes the application but preserves settings, cached
-  screens, and the shared extension runtime.
+- **Reactivate after reboot** starts XOVI/AppLoad without reinstalling files.
+- **Restore stock interface** stops the injection and returns to reMarkable.
+- **Uninstall TRMNL** removes the app but preserves its data and shared runtime.
+- **Uninstall and erase data** also removes TRMNL settings/cache/history/logs.
 
-If the installer cannot connect, reboot the tablet. This release deliberately
-uses a temporary runtime injection, so a reboot returns to the stock interface.
+None of these disables Developer Mode. Use reMarkable's official
+[software recovery](https://support.remarkable.com/s/article/Software-recovery)
+to leave Developer Mode.
 
-## Windows warning
+## Windows trust warning
 
-Until releases are code-signed, Windows SmartScreen may show an unknown
-publisher warning. Verify the ZIP against `SHA256SUMS.txt`, then use **More
-info → Run anyway** only when the checksum matches the release page.
+The executable contains icon, manifest, compatibility, and version metadata.
+Some releases may still show **Unknown publisher** until the maintainer adds an
+Authenticode certificate. A matching SHA-256 proves file integrity against the
+release record, but it is not the same as publisher identity. Proceed only if
+you trust this project and the checksum matches.

@@ -26,6 +26,11 @@ licensed TRMNL backend, and the standalone application bundle contains none of
 their code. Release builders can reproduce the runtime download using
 `scripts/fetch-runtime.ps1`; its URLs and SHA-256 values are pinned.
 
+Release builds use `tc-hib/go-winres` v0.3.3 (0BSD) to generate Windows PE
+resources from `installer/winres/winres.json`. The tool itself is not included
+in the release archive; the generated icon, manifest, and version resource are
+linked into the installer.
+
 ## TRMNL Display MIT license
 
 Copyright (c) 2025 TRMNL

@@ -58,7 +58,33 @@ type Client struct {
 	RSSI    func() string
 }
 
-func New() *Client { return &Client{HTTP: &http.Client{Timeout: 30 * time.Second}, Version: "dev"} }
+func New() *Client {
+	return &Client{HTTP: &http.Client{Timeout: 30 * time.Second, CheckRedirect: secureRedirect}, Version: "dev"}
+}
+
+func secureRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	if len(via) >= 10 {
+		return errors.New("too many redirects")
+	}
+	initial := via[0].URL
+	if !strings.EqualFold(initial.Scheme, req.URL.Scheme) || !strings.EqualFold(initial.Host, req.URL.Host) {
+		return errors.New("cross-origin or protocol-changing redirect refused")
+	}
+	return nil
+}
+
+func secureImageRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("too many redirects")
+	}
+	if err := config.ValidateRemoteURL(req.URL.String()); err != nil {
+		return fmt.Errorf("unsafe image redirect: %w", err)
+	}
+	return nil
+}
 
 func (c *Client) Display(ctx context.Context, cfg config.Config, advance bool) (DisplayResponse, error) {
 	paths := []string{"/api/display"}
@@ -83,8 +109,9 @@ func (c *Client) Display(ctx context.Context, cfg config.Config, advance bool) (
 }
 
 type HTTPError struct {
-	Status int
-	Body   string
+	Status     int
+	Body       string
+	RetryAfter time.Duration
 }
 
 func (e *HTTPError) Error() string { return fmt.Sprintf("TRMNL server returned HTTP %d", e.Status) }
@@ -126,7 +153,7 @@ func (c *Client) get(ctx context.Context, cfg config.Config, path string) (Displ
 	defer r.Body.Close()
 	if r.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(r.Body, 1024))
-		return DisplayResponse{}, &HTTPError{Status: r.StatusCode, Body: string(b)}
+		return DisplayResponse{}, &HTTPError{Status: r.StatusCode, Body: string(b), RetryAfter: parseRetryAfter(r.Header.Get("Retry-After"), time.Now())}
 	}
 	var out DisplayResponse
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&out); err != nil {
@@ -142,6 +169,9 @@ func (c *Client) get(ctx context.Context, cfg config.Config, path string) (Displ
 }
 
 func (c *Client) Download(ctx context.Context, imageURL string, timeout time.Duration, etag, lastModified string) (io.ReadCloser, http.Header, error) {
+	if err := config.ValidateRemoteURL(imageURL); err != nil {
+		return nil, nil, fmt.Errorf("image URL: %w", err)
+	}
 	if timeout <= 0 || timeout > 2*time.Minute {
 		timeout = 30 * time.Second
 	}
@@ -158,7 +188,9 @@ func (c *Client) Download(ctx context.Context, imageURL string, timeout time.Dur
 	if lastModified != "" {
 		req.Header.Set("If-Modified-Since", lastModified)
 	}
-	r, err := c.HTTP.Do(req)
+	downloadClient := *c.HTTP
+	downloadClient.CheckRedirect = secureImageRedirect
+	r, err := downloadClient.Do(req)
 	if err != nil {
 		cancel()
 		return nil, nil, err
@@ -174,6 +206,23 @@ func (c *Client) Download(ctx context.Context, imageURL string, timeout time.Dur
 		return nil, nil, fmt.Errorf("image server returned HTTP %d", r.StatusCode)
 	}
 	return &cancelReadCloser{ReadCloser: r.Body, cancel: cancel}, r.Header, nil
+}
+
+func parseRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		if seconds < 0 {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	if at, err := http.ParseTime(value); err == nil && at.After(now) {
+		return at.Sub(now)
+	}
+	return 0
 }
 
 var ErrNotModified = errors.New("image not modified")

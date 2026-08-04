@@ -1,0 +1,51 @@
+name: Bug report
+description: Report a reproducible problem on a supported Paper Pro.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Never include an API key, SSH password, private key, or unredacted configuration."
+  - type: input
+    id: version
+    attributes:
+      label: TRMNL release
+      placeholder: "1.1.0 and release ZIP SHA-256"
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: reMarkable model and firmware
+      placeholder: "Paper Pro (Ferrari), 3.27.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Installer connection
+      options: [USB, Wi-Fi, Not installer-related]
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Include expected and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics and error
+      description: Copy from in-app Diagnostics and remove any sensitive values.
+      render: text
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed credentials and private data.
+          required: true
+        - label: I am not bypassing the documented model/firmware gate.
+          required: true

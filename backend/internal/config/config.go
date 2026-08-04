@@ -47,15 +47,12 @@ func (c *Config) Normalize() error {
 	if c.BaseURL == "" {
 		c.BaseURL = DefaultBaseURL
 	}
-	u, err := url.Parse(c.BaseURL)
-	if err != nil || u.Hostname() == "" {
-		return errors.New("server URL is invalid")
+	if err := ValidateRemoteURL(c.BaseURL); err != nil {
+		return fmt.Errorf("server URL: %w", err)
 	}
-	if u.Scheme != "https" {
-		isLoopback := u.Scheme == "http" && (u.Hostname() == "localhost" || net.ParseIP(u.Hostname()) != nil && net.ParseIP(u.Hostname()).IsLoopback())
-		if !isLoopback {
-			return errors.New("server URL must use HTTPS; HTTP is allowed only for a mock server on this device")
-		}
+	u, _ := url.Parse(c.BaseURL)
+	if u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("server URL must be an origin without a path, query, or fragment")
 	}
 	if c.MinimumRefreshSeconds < 60 {
 		c.MinimumRefreshSeconds = 60
@@ -81,6 +78,28 @@ func (c *Config) Normalize() error {
 	case "auto", "portrait", "landscape":
 	default:
 		c.Orientation = "auto"
+	}
+	return nil
+}
+
+// ValidateRemoteURL applies the transport policy shared by Device API and
+// image requests. Production traffic must use HTTPS; plain HTTP is limited to
+// a loopback mock running on the tablet itself.
+func ValidateRemoteURL(value string) error {
+	u, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || !u.IsAbs() || u.Hostname() == "" {
+		return errors.New("URL is invalid")
+	}
+	if u.User != nil {
+		return errors.New("embedded usernames or passwords are not allowed")
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return nil
+	}
+	ip := net.ParseIP(u.Hostname())
+	isLoopback := u.Scheme == "http" && (strings.EqualFold(u.Hostname(), "localhost") || ip != nil && ip.IsLoopback())
+	if !isLoopback {
+		return errors.New("HTTPS is required; HTTP is allowed only for a loopback mock on this device")
 	}
 	return nil
 }

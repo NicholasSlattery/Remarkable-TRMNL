@@ -6,13 +6,47 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install validation tools
+        run: sudo apt-get update && sudo apt-get install -y shellcheck qt6-base-dev qt6-declarative-dev-tools
+      - name: Validate source and build paths
+        run: |
+          test -z "$(gofmt -l backend installer)"
+          go test -race ./...
+          go vet ./...
+          shellcheck ./*.sh scripts/*.sh
+          python3 -m compileall -q scripts tests
+          qmllint -W 0 -I tests/qml-stubs app/ui/TRMNL.qml
+          rcc --binary -o /tmp/resources.rcc app/application.qrc
+          test -s /tmp/resources.rcc
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=$(cat VERSION)" -o /tmp/trmnl-remarkable ./backend/cmd/trmnl-remarkable
+          CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags='-s -w -X main.version=integration' -o /tmp/trmnl-backend ./backend/cmd/trmnl-remarkable
+          CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags='-s -w' -o /tmp/trmnl-mock ./backend/cmd/trmnl-mock
+          python3 tests/appload_harness.py /tmp/trmnl-backend /tmp/trmnl-mock
+      - name: Dependency vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          govulncheck ./...
+
   release:
+    needs: verify
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -20,13 +54,37 @@ jobs:
         with:
           version: "6.8.2"
           modules: qtdeclarative
-      - name: Build signed-input release assets
+      - name: Build release assets
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v')
           if ((Get-Content -Raw VERSION).Trim() -ne $version) { throw 'Tag and VERSION do not match' }
           ./scripts/build-release.ps1 -Version $version
-      - uses: softprops/action-gh-release@v2
+      - name: Authenticode-sign Windows installer when configured
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_SIGNING_CERT_BASE64) {
+            Write-Warning 'WINDOWS_SIGNING_CERT_BASE64 is not configured; release will be unsigned.'
+            exit 0
+          }
+          $certificate = Join-Path $env:RUNNER_TEMP 'windows-signing.pfx'
+          try {
+            [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT_BASE64))
+            ./scripts/sign-windows-release.ps1 -Version "${{ github.ref_name }}".TrimStart('v') -PfxPath $certificate -PfxPassword $env:WINDOWS_SIGNING_CERT_PASSWORD
+          } finally {
+            Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue
+          }
+      - name: Attest release archives
+        if: ${{ github.event.repository.private == false }}
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            release/*.zip
+            release/SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           draft: true

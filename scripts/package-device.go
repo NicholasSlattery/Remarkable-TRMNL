@@ -22,6 +22,10 @@ var include = []string{
 	"diagnostics.sh",
 	"test-on-device.sh",
 	"README.md",
+	"BYOD_SETUP.md",
+	"PRIVACY.md",
+	"COMPATIBILITY.md",
+	"V1.1_VALIDATION.md",
 	"LICENSE",
 	"THIRD_PARTY_NOTICES.md",
 }

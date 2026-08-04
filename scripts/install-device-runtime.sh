@@ -78,7 +78,10 @@ if [ ! -e /home/root/xovi ]; then
     created_xovi=1
     tar -xzf "$STAGE/xovi-aarch64.tar.gz" -C /home/root
 fi
-[ -f /home/root/xovi/xovi.so ] && [ -f /home/root/xovi/extensions.d/qt-resource-rebuilder.so ] || { echo "Compatible XOVI runtime is missing or incomplete" >&2; exit 36; }
+if ! { [ -f /home/root/xovi/xovi.so ] && [ -f /home/root/xovi/extensions.d/qt-resource-rebuilder.so ]; }; then
+    echo "Compatible XOVI runtime is missing or incomplete" >&2
+    exit 36
+fi
 expect_hash d4df820c25c634c511de11067279d8310fa4f656dc52bd4540db6beac4ffd446 /home/root/xovi/xovi.so
 expect_hash 6726f561557406f36347e43fc2b44a88deef4fb273d2ece88f48f427dad8800f /home/root/xovi/extensions.d/qt-resource-rebuilder.so
 

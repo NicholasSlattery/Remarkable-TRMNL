@@ -23,3 +23,13 @@ or unredacted configuration in a report.
 - Remote Device API/BYOS connections require HTTPS.
 - Settings are stored owner-only and diagnostics redact the API key.
 - Runtime installation rolls back newly installed files on failure.
+- API redirects cannot cross origin/protocol, remote images require HTTPS, and
+  downloaded images are size/dimension validated before decoding.
+- Tag releases run the CI validation matrix before packaging, publish SHA-256
+  checksums and an SBOM, and support Authenticode signing. Public repository
+  releases also publish GitHub build-provenance attestations.
+
+Checksum verification establishes that a file matches the GitHub Release; it
+does not identify a Windows publisher. Users should expect **Unknown publisher**
+until the release notes explicitly say the installer was Authenticode-signed and
+the signature verifies to the named maintainer.

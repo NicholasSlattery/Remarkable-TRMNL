@@ -12,8 +12,8 @@ import (
 )
 
 func TestParseKeyValues(t *testing.T) {
-	got := parseKeyValues("model=reMarkable Ferrari\nos=3.27.3.0\ninstalled=yes\n")
-	if got["model"] != "reMarkable Ferrari" || got["installed"] != "yes" {
+	got := parseKeyValues("model=reMarkable Ferrari\nos=3.27.3.0\ninstalled=yes\nactive=no\n")
+	if got["model"] != "reMarkable Ferrari" || got["installed"] != "yes" || got["active"] != "no" {
 		t.Fatalf("unexpected values: %#v", got)
 	}
 }
@@ -56,7 +56,7 @@ func TestInstallerPageRenders(t *testing.T) {
 		t.Fatalf("unexpected status: %d", recorder.Code)
 	}
 	body := recorder.Body.String()
-	for _, expected := range []string{"TRMNL for reMarkable", "Find my tablet", "test-token"} {
+	for _, expected := range []string{"TRMNL for reMarkable", "Find my tablet", "Developer Mode", "Reactivate after reboot", "Uninstall and erase data", "test-token"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("installer page missing %q", expected)
 		}

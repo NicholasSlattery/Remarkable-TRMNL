@@ -13,3 +13,5 @@ config.json
 coverage.out
 __pycache__/
 *.pyc
+installer/rsrc_windows_*.syso
+installer/winres/winres.generated.json

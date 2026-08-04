@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -28,8 +29,9 @@ var version = "dev"
 var webFiles embed.FS
 
 type server struct {
-	csrf       string
-	payloadDir string
+	csrf        string
+	payloadDir  string
+	operationMu sync.Mutex
 }
 
 type credentials struct {
@@ -46,6 +48,7 @@ type response struct {
 	OSVersion   string `json:"os_version,omitempty"`
 	Compatible  bool   `json:"compatible,omitempty"`
 	Installed   bool   `json:"installed,omitempty"`
+	Active      bool   `json:"active,omitempty"`
 }
 
 type payloadManifest struct {
@@ -74,8 +77,10 @@ func main() {
 	mux.HandleFunc("/icon.png", s.icon)
 	mux.HandleFunc("/api/preflight", s.preflight)
 	mux.HandleFunc("/api/install", s.install)
+	mux.HandleFunc("/api/reactivate", s.reactivate)
 	mux.HandleFunc("/api/recover", s.recover)
 	mux.HandleFunc("/api/uninstall", s.uninstall)
+	mux.HandleFunc("/api/purge", s.purge)
 	mux.HandleFunc("/api/quit", s.quit)
 	httpServer := &http.Server{Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second}
 	url := "http://" + ln.Addr().String() + "/"
@@ -138,7 +143,7 @@ func (s *server) preflight(w http.ResponseWriter, r *http.Request) {
 	if !compatible {
 		message = "This installer supports only reMarkable Paper Pro firmware 3.26 or 3.27. Nothing was changed."
 	}
-	writeJSON(w, http.StatusOK, response{OK: true, Message: message, Fingerprint: fingerprint, Model: values["model"], OSVersion: values["os"], Compatible: compatible, Installed: values["installed"] == "yes"})
+	writeJSON(w, http.StatusOK, response{OK: true, Message: message, Fingerprint: fingerprint, Model: values["model"], OSVersion: values["os"], Compatible: compatible, Installed: values["installed"] == "yes", Active: values["active"] == "yes"})
 }
 
 func (s *server) install(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +151,8 @@ func (s *server) install(w http.ResponseWriter, r *http.Request) {
 	if !s.decode(w, r, &c) {
 		return
 	}
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
 	manifest, err := verifyPayload(s.payloadDir)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, response{Message: "Release payload is incomplete: " + err.Error()})
@@ -181,12 +188,20 @@ func (s *server) install(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response{OK: true, Message: "TRMNL is installed. On the tablet, open AppLoad and tap TRMNL."})
 }
 
+func (s *server) reactivate(w http.ResponseWriter, r *http.Request) {
+	s.deviceAction(w, r, "test -x /home/root/xovi/start && test -f /home/root/xovi/exthome/appload/trmnl-remarkable/manifest.json || exit 1; nohup sh -c 'sleep 1; exec /home/root/xovi/start' >/tmp/trmnl-xovi-start.log 2>&1 </dev/null &", "TRMNL is reactivating. Open AppLoad on the tablet in a few seconds.")
+}
+
 func (s *server) recover(w http.ResponseWriter, r *http.Request) {
-	s.deviceAction(w, r, "/home/root/trmnl-remarkable/recover-stock.sh", "Stock reMarkable interface restored.")
+	s.deviceAction(w, r, "test -x /home/root/trmnl-remarkable/recover-stock.sh && /home/root/trmnl-remarkable/recover-stock.sh", "The normal reMarkable interface was restored. Developer Mode remains enabled.")
 }
 
 func (s *server) uninstall(w http.ResponseWriter, r *http.Request) {
-	s.deviceAction(w, r, "/home/root/trmnl-remarkable/uninstall.sh", "TRMNL was removed. Settings and the shared extension runtime were preserved.")
+	s.deviceAction(w, r, "test -x /home/root/trmnl-remarkable/uninstall.sh && /home/root/trmnl-remarkable/uninstall.sh", "TRMNL was removed. Settings and the shared extension runtime were preserved.")
+}
+
+func (s *server) purge(w http.ResponseWriter, r *http.Request) {
+	s.deviceAction(w, r, "if test -x /home/root/trmnl-remarkable/uninstall.sh; then /home/root/trmnl-remarkable/uninstall.sh --purge; else rm -rf -- /home/root/.config/trmnl-remarkable /home/root/.cache/trmnl-remarkable /home/root/.local/share/trmnl-remarkable /home/root/xovi/exthome/appload/trmnl-remarkable; fi", "TRMNL and its settings, API key, cache, logs, history, and battery-test data were removed. The shared extension runtime was preserved.")
 }
 
 func (s *server) quit(w http.ResponseWriter, r *http.Request) {
@@ -201,18 +216,20 @@ func (s *server) quit(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
-func (s *server) deviceAction(w http.ResponseWriter, r *http.Request, script, success string) {
+func (s *server) deviceAction(w http.ResponseWriter, r *http.Request, command, success string) {
 	var c credentials
 	if !s.decode(w, r, &c) {
 		return
 	}
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
 	client, _, err := connect(c, c.Fingerprint)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, response{Message: friendlySSHError(err)})
 		return
 	}
 	defer client.Close()
-	out, err := run(client, "test -x "+script+" && "+script)
+	out, err := run(client, command)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, response{Message: strings.TrimSpace(out)})
 		return
@@ -344,7 +361,7 @@ func parseKeyValues(s string) map[string]string {
 }
 
 func inspectDevice(client *ssh.Client) (map[string]string, bool, error) {
-	out, err := run(client, `printf 'model='; tr -d '\000' </proc/device-tree/model 2>/dev/null || true; printf '\nos='; sed -n 's/^IMG_VERSION="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' /etc/os-release | head -n1; printf '\narch='; uname -m; printf '\ninstalled='; test -f /home/root/xovi/exthome/appload/trmnl-remarkable/manifest.json && echo yes || echo no`)
+	out, err := run(client, `printf 'model='; tr -d '\000' </proc/device-tree/model 2>/dev/null || true; printf '\nos='; sed -n 's/^IMG_VERSION="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' /etc/os-release | head -n1; printf '\narch='; uname -m; printf '\ninstalled='; test -f /home/root/xovi/exthome/appload/trmnl-remarkable/manifest.json && echo yes || echo no; printf 'active='; pid=$(pidof xochitl | awk '{print $1}'); if [ -n "$pid" ] && tr '\000' '\n' <"/proc/$pid/environ" 2>/dev/null | grep -q '^LD_PRELOAD=/home/root/xovi/xovi.so$'; then echo yes; else echo no; fi`)
 	if err != nil {
 		return nil, false, err
 	}

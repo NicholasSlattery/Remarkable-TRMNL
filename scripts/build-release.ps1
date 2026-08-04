@@ -42,17 +42,28 @@ Get-ChildItem -Recurse -File -LiteralPath $payload | Where-Object Name -ne 'mani
 $manifestJson = [ordered]@{ version=$Version; files=$files } | ConvertTo-Json -Depth 4
 Write-Utf8NoBom (Join-Path $payload 'manifest.json') $manifestJson
 
+$null = $Version -match '^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)'
+$windowsVersion = "$($Matches.major).$($Matches.minor).$($Matches.patch).0"
+$resourceTemplate = Join-Path $root 'installer\winres\winres.json'
+$resourceConfig = Join-Path $root 'installer\winres\winres.generated.json'
+$resourceObject = Join-Path $root 'installer\rsrc_windows_amd64.syso'
+$resourceJson = (Get-Content -Raw -LiteralPath $resourceTemplate).Replace('1.1.0.0', $windowsVersion)
 $oldGOOS=$env:GOOS; $oldGOARCH=$env:GOARCH; $oldCGO=$env:CGO_ENABLED
 try {
+    Write-Utf8NoBom $resourceConfig $resourceJson
+    & $go run github.com/tc-hib/go-winres@v0.3.3 make --in $resourceConfig --arch amd64 --out (Join-Path $root 'installer\rsrc') --file-version $windowsVersion --product-version $windowsVersion
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $resourceObject)) { throw 'Windows resource generation failed' }
     $env:GOOS='windows'; $env:GOARCH='amd64'; $env:CGO_ENABLED='0'
     & $go build -buildvcs=false -trimpath -ldflags "-s -w -H=windowsgui -X main.version=$Version" -o (Join-Path $packageRoot 'TRMNL Installer.exe') (Join-Path $root 'installer')
     if ($LASTEXITCODE -ne 0) { throw 'Graphical installer build failed' }
 } finally {
     $env:GOOS=$oldGOOS; $env:GOARCH=$oldGOARCH; $env:CGO_ENABLED=$oldCGO
+    if (Test-Path -LiteralPath $resourceObject) { Remove-Item -LiteralPath $resourceObject }
+    if (Test-Path -LiteralPath $resourceConfig) { Remove-Item -LiteralPath $resourceConfig }
 }
 
 Copy-Item -LiteralPath (Join-Path $root 'EASY_INSTALL.md') -Destination (Join-Path $packageRoot 'READ ME - Install TRMNL.md')
-Copy-Item -LiteralPath (Join-Path $root 'LICENSE'),(Join-Path $root 'THIRD_PARTY_NOTICES.md') -Destination $packageRoot
+Copy-Item -LiteralPath (Join-Path $root 'BYOD_SETUP.md'),(Join-Path $root 'PRIVACY.md'),(Join-Path $root 'COMPATIBILITY.md'),(Join-Path $root 'V1.1_VALIDATION.md'),(Join-Path $root 'LICENSE'),(Join-Path $root 'THIRD_PARTY_NOTICES.md') -Destination $packageRoot
 $sourceOut = Join-Path $packageRoot 'Corresponding Source'
 New-Item -ItemType Directory -Path $sourceOut -Force | Out-Null
 Copy-Item -Path (Join-Path $downloads 'sources\*.tar.gz') -Destination $sourceOut

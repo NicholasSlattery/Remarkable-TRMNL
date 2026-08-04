@@ -17,13 +17,14 @@ Rectangle {
         start_with_cache_offline: true, wake_for_refresh: true, logging_level: "info"
     })
     property string dashboardSource: ""
+    property bool dashboardAvailable: false
+    property var batteryTest: ({active:false, samples:[], estimate_available:false})
     property string statusText: "Starting…"
     property bool offline: false
     property bool controlsVisible: false
     property bool settingsVisible: false
     property bool apiKeyConfigured: false
     property bool initialized: false
-    property string pendingDashboardSource: ""
     property int cleaningPhase: 0
 
     function unloading() { endpoint.terminate() }
@@ -68,7 +69,7 @@ Rectangle {
         var c = appConfig
         serverMode.currentIndex = (c.base_url === "https://trmnl.com" || c.base_url === "https://trmnl.app") ? 0 : 1
         customURL.text = serverMode.currentIndex === 1 ? c.base_url : ""
-        deviceID.text = c.device_id || ""
+        deviceID.text = c.device_id || appState.detected_device_id || ""
         apiKey.text = ""
         minRefresh.text = String(c.minimum_refresh_seconds || 60)
         fitMode.currentIndex = c.fit_mode === "fill" ? 1 : (c.fit_mode === "stretch" ? 2 : 0)
@@ -82,14 +83,6 @@ Rectangle {
         startCached.checked = c.start_with_cache_offline !== false
         wakeForRefresh.checked = c.wake_for_refresh !== false
         logLevel.currentIndex = c.logging_level === "debug" ? 1 : (c.logging_level === "warning" ? 2 : 0)
-    }
-    function redrawDashboard(fetchLatest) {
-        if (dashboardSource !== "") {
-            pendingDashboardSource = dashboardSource
-            dashboardSource = ""
-            dashboardRedraw.restart()
-        }
-        if (fetchLatest) overlayRefresh.restart()
     }
     function requestNativeFullRefresh() {
         // AppLoad owns the framebuffer controller above this loaded component.
@@ -110,48 +103,37 @@ Rectangle {
         }
         return false
     }
-    function cleanScreen(fetchLatest) {
-        redrawDashboard(fetchLatest)
+    function cleanScreen() {
         panelRefreshDelay.restart()
     }
     function fallbackCleanScreen() {
         cleaningPhase = 1
         cleaningFlashTimer.restart()
     }
+    function formatTestHours(hours) {
+        if (hours === undefined || hours === null || !isFinite(hours)) return "calculating…"
+        if (hours < 1) return Math.max(0, Math.round(hours * 60)) + " minutes"
+        if (hours < 48) return hours.toFixed(1) + " hours"
+        return (hours / 24).toFixed(1) + " days"
+    }
     function showControls(show) {
         controlsVisible = show
         if (show) settingsVisible = false
-        cleanScreen(true)
+        cleanScreen()
     }
     function showSettings(show) {
         if (show) configureFields()
         settingsVisible = show
         controlsVisible = false
-        cleanScreen(true)
+        cleanScreen()
     }
 
-    Timer {
-        id: dashboardRedraw
-        interval: 80
-        onTriggered: {
-            root.dashboardSource = root.pendingDashboardSource
-            root.pendingDashboardSource = ""
-        }
-    }
-    Timer { id: overlayRefresh; interval: 350; onTriggered: endpoint.sendMessage(4, "") }
     Timer {
         id: panelRefreshDelay
         interval: 140
         onTriggered: {
             if (!root.requestNativeFullRefresh()) root.fallbackCleanScreen()
         }
-    }
-    Timer {
-        id: menuCleanupTimer
-        interval: 5000
-        repeat: true
-        running: root.controlsVisible || root.settingsVisible || diagnosticsPopup.visible
-        onTriggered: root.cleanScreen(false)
     }
     Timer {
         id: cleaningFlashTimer
@@ -163,7 +145,6 @@ Rectangle {
             } else {
                 root.cleaningPhase = 0
                 stop()
-                root.redrawDashboard(false)
             }
         }
     }
@@ -176,10 +157,8 @@ Rectangle {
             try { data = JSON.parse(contents || "{}") } catch (e) { root.statusText = "Invalid backend message"; return }
             if (type === 101) { root.applyState(data); if (!root.initialized) { root.configureFields(); root.initialized = true } }
             else if (type === 102) {
-                dashboardRedraw.stop()
-                root.dashboardSource = ""
-                root.pendingDashboardSource = data.path
-                dashboardRedraw.restart()
+                root.dashboardSource = data.path
+                root.dashboardAvailable = true
                 panelRefreshDelay.restart()
                 root.offline = !!data.cached
             } else if (type === 103) { root.statusText = data.message || ""; root.offline = false }
@@ -192,6 +171,7 @@ Rectangle {
             }
             else if (type === 106) { testResult.text = data.message || ""; testResult.color = data.ok ? "#124e2c" : "#7a1515" }
             else if (type === 107) { diagnosticsText.text = JSON.stringify(data, null, 2) }
+            else if (type === 108) { root.batteryTest = data; batteryChart.requestPaint() }
         }
     }
 
@@ -204,7 +184,7 @@ Rectangle {
                 root.controlsVisible = false
                 root.settingsVisible = false
                 diagnosticsPopup.close()
-                root.cleanScreen(false)
+                root.cleanScreen()
                 endpoint.sendMessage(10, "")
             }
             // qmllint enable missing-property
@@ -231,7 +211,7 @@ Rectangle {
     }
 
     Rectangle {
-        visible: root.dashboardSource === ""
+        visible: !root.dashboardAvailable
         anchors.centerIn: parent
         width: Math.min(parent.width * 0.8, 900)
         height: 320
@@ -313,7 +293,7 @@ Rectangle {
                 Row {
                     spacing: 14
                     Button { text: "Settings"; width: 220; height: 78; font.pixelSize: 23; onClicked: root.showSettings(true) }
-                    Button { text: "Diagnostics"; width: 220; height: 78; font.pixelSize: 23; onClicked: { root.cleanScreen(true); endpoint.sendMessage(8, ""); diagnosticsPopup.open() } }
+                    Button { text: "Diagnostics"; width: 220; height: 78; font.pixelSize: 23; onClicked: { root.cleanScreen(); endpoint.sendMessage(8, ""); diagnosticsPopup.open() } }
                 }
                 Button { text: "Return to reMarkable"; width: parent.width; height: 92; font.pixelSize: 27; font.bold: true; onClicked: root.close() }
                 Text { text: "Refresh history"; font.pixelSize: 28; font.bold: true }
@@ -375,6 +355,74 @@ Rectangle {
                     visible: !!root.appState.next_refresh; width: parent.width; font.pixelSize: 19; color: "#444"
                     text: "Next refresh  " + (root.appState.next_refresh ? new Date(root.appState.next_refresh).toLocaleString(Qt.locale(), Locale.ShortFormat) : "after settings are saved")
                 }
+                Rectangle { width: parent.width; height: 3; color: "#b8b4aa" }
+                Text { text: "Battery life test"; font.pixelSize: 28; font.bold: true }
+                Text {
+                    width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 19; color: "#444"
+                    text: "For the best estimate, charge to 100%, unplug the charger, tap Start new test, and leave TRMNL running normally for at least 48 hours. Samples survive sleep and app restarts."
+                }
+                Text {
+                    width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 22; font.bold: true
+                    text: root.batteryTest.active
+                          ? "Running · " + root.batteryTest.current_percent + "% battery"
+                          : (root.batteryTest.started_at ? "Stopped · " + root.batteryTest.current_percent + "% battery" : "No test recorded")
+                    color: root.batteryTest.active ? "#124e2c" : "#222"
+                }
+                Text {
+                    visible: !!root.batteryTest.started_at; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 20
+                    text: "Elapsed  " + root.formatTestHours(root.batteryTest.elapsed_hours)
+                          + "    Used  " + root.batteryTest.percent_used + "%"
+                          + "    Refreshes  " + root.batteryTest.refresh_count
+                          + "    Wakes  " + root.batteryTest.wake_count
+                }
+                Text {
+                    visible: !!root.batteryTest.started_at; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 22; font.bold: true
+                    text: root.batteryTest.estimate_available
+                          ? "Projected total battery life  " + root.formatTestHours(root.batteryTest.projected_total_hours)
+                            + "  ·  about " + root.formatTestHours(root.batteryTest.projected_remaining_hours) + " remaining"
+                          : "Projection begins after the battery drops at least 2%."
+                }
+                Text {
+                    visible: root.batteryTest.active && (root.batteryTest.battery_status === "Charging" || root.batteryTest.battery_status === "Full")
+                    width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 19; color: "#7a1515"
+                    text: "Unplug the charger—the test is recording, but a charging period makes the projection inaccurate."
+                }
+                Canvas {
+                    id: batteryChart
+                    visible: root.batteryTest.samples && root.batteryTest.samples.length > 1
+                    width: parent.width; height: visible ? 230 : 0
+                    onWidthChanged: requestPaint()
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.clearRect(0, 0, width, height)
+                        ctx.fillStyle = "#eeece5"
+                        ctx.fillRect(0, 0, width, height)
+                        var samples = root.batteryTest.samples || []
+                        if (samples.length < 2) return
+                        var left = 54, right = width - 18, top = 18, bottom = height - 38
+                        ctx.strokeStyle = "#77736b"; ctx.lineWidth = 2
+                        ctx.beginPath(); ctx.moveTo(left, top); ctx.lineTo(left, bottom); ctx.lineTo(right, bottom); ctx.stroke()
+                        var first = new Date(samples[0].at).getTime()
+                        var last = new Date(samples[samples.length - 1].at).getTime()
+                        if (last <= first) last = first + 1
+                        ctx.strokeStyle = "#111111"; ctx.lineWidth = 4; ctx.beginPath()
+                        for (var i = 0; i < samples.length; ++i) {
+                            var x = left + (new Date(samples[i].at).getTime() - first) * (right - left) / (last - first)
+                            var y = bottom - Math.max(0, Math.min(100, samples[i].percent)) * (bottom - top) / 100
+                            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+                        }
+                        ctx.stroke()
+                        ctx.fillStyle = "#222222"; ctx.font = "18px sans-serif"
+                        ctx.fillText("100%", 2, top + 7); ctx.fillText("0%", 18, bottom + 7)
+                        ctx.fillText("start", left, height - 10); ctx.fillText("now", right - 34, height - 10)
+                    }
+                }
+                Row {
+                    spacing: 14
+                    Button { text: "Start new test"; width: 240; height: 76; font.pixelSize: 21; enabled: !root.batteryTest.active && root.appState.battery_percent >= 0; onClicked: endpoint.sendMessage(14, "") }
+                    Button { text: "Stop"; width: 160; height: 76; font.pixelSize: 21; enabled: !!root.batteryTest.active; onClicked: endpoint.sendMessage(15, "") }
+                    Button { text: "Reset data"; width: 190; height: 76; font.pixelSize: 21; enabled: !!root.batteryTest.started_at; onClicked: endpoint.sendMessage(16, "") }
+                }
                 Row { spacing: 18; Text { text: "Logging"; width: 180; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter } ComboBox { id: logLevel; width: 240; height: 64; model: ["Info", "Debug", "Warning"]; font.pixelSize: 22 } }
                 Text { id: testResult; width: parent.width; font.pixelSize: 21; wrapMode: Text.Wrap }
                 Row { spacing: 14; Button { text: "Test connection"; width: 240; height: 78; font.pixelSize: 22; onClicked: { testResult.text = "Testing…"; endpoint.sendMessage(3, JSON.stringify(root.configFromFields())) } } Button { text: "Save"; width: 190; height: 78; font.pixelSize: 22; onClicked: { endpoint.sendMessage(2, JSON.stringify(root.configFromFields())); root.showSettings(false) } } Button { text: "Clear cache"; width: 190; height: 78; font.pixelSize: 22; onClicked: endpoint.sendMessage(7, "") } Button { text: "Reset"; width: 150; height: 78; font.pixelSize: 22; onClicked: endpoint.sendMessage(11, "") } }
@@ -385,7 +433,7 @@ Rectangle {
 
     Popup {
         id: diagnosticsPopup; modal: true; focus: true; x: root.width*0.08; y: root.height*0.08; width: root.width*0.84; height: root.height*0.84
-        onClosed: root.cleanScreen(true)
+        onClosed: root.cleanScreen()
         background: Rectangle { color: "#f4f2eb"; border.width: 3 }
         contentItem: Column { spacing: 12; Text { text: "Diagnostics"; font.pixelSize: 30; font.bold: true } ScrollView { width: parent.width; height: parent.height - 100; TextArea { id: diagnosticsText; readOnly: true; wrapMode: Text.Wrap; font.pixelSize: 17 } } Button { text: "Close"; width: 180; height: 64; onClicked: diagnosticsPopup.close() } }
     }

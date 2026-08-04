@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,12 +10,14 @@ import (
 	"image/color"
 	_ "image/jpeg"
 	"image/png"
+	"io"
 	"log"
 	"net"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +25,7 @@ import (
 	"time"
 
 	_ "golang.org/x/image/bmp"
+	"trmnl-remarkable/backend/internal/batterytest"
 	"trmnl-remarkable/backend/internal/brightness"
 	"trmnl-remarkable/backend/internal/cache"
 	"trmnl-remarkable/backend/internal/config"
@@ -45,6 +49,9 @@ const (
 	msgResetSettings     uint32 = 11
 	msgPrevious          uint32 = 12
 	msgUpdatePreferences uint32 = 13
+	msgBatteryStart      uint32 = 14
+	msgBatteryStop       uint32 = 15
+	msgBatteryReset      uint32 = 16
 	msgState             uint32 = 101
 	msgImage             uint32 = 102
 	msgStatus            uint32 = 103
@@ -52,6 +59,7 @@ const (
 	msgHistory           uint32 = 105
 	msgTestResult        uint32 = 106
 	msgDiagnosticsResult uint32 = 107
+	msgBatteryTest       uint32 = 108
 )
 
 type historyEntry struct {
@@ -67,8 +75,10 @@ type trigger struct {
 
 type app struct {
 	mu                               sync.RWMutex
+	batteryMu                        sync.Mutex
 	cfg                              config.Config
 	configPath, dataDir, historyPath string
+	batteryPath                      string
 	conn                             *protocol.Connection
 	client                           *trmnl.Client
 	cache                            cache.Store
@@ -82,6 +92,7 @@ type app struct {
 	guardDisarm                      string
 	nextRefresh                      time.Time
 	wakeAlarmError                   string
+	batteryTest                      batterytest.State
 }
 
 func main() {
@@ -130,11 +141,16 @@ func main() {
 	}
 	defer conn.Close()
 	ctx, cancel := context.WithCancel(context.Background())
-	a := &app{cfg: cfg, configPath: configPath, dataDir: dataDir, historyPath: filepath.Join(dataDir, "history.json"), conn: conn, client: trmnl.New(), cache: cache.Store{Dir: filepath.Join(home, ".cache", "trmnl-remarkable")}, triggers: make(chan trigger, 4), ctx: ctx, cancel: cancel}
+	a := &app{cfg: cfg, configPath: configPath, dataDir: dataDir, historyPath: filepath.Join(dataDir, "history.json"), batteryPath: filepath.Join(dataDir, "battery-test.json"), conn: conn, client: trmnl.New(), cache: cache.Store{Dir: filepath.Join(home, ".cache", "trmnl-remarkable")}, triggers: make(chan trigger, 4), ctx: ctx, cancel: cancel}
 	a.client.Version = version
-	a.client.Battery = readBattery
+	a.client.Battery = readBatteryVoltage
 	a.client.RSSI = readRSSI
 	a.loadHistory()
+	if saved, e := batterytest.Load(a.batteryPath); e == nil {
+		a.batteryTest = saved
+	} else {
+		log.Printf("battery test load failed: %v", e)
+	}
 	if light, e := brightness.Discover("/sys/class/backlight"); e == nil {
 		a.light = light
 		a.startBrightnessGuard()
@@ -164,6 +180,7 @@ func main() {
 		cancel()
 	}()
 	go a.scheduler()
+	go a.batterySampler()
 	if e, ok := a.cache.Latest(); ok && cfg.StartWithCacheOffline {
 		a.sendImage(e, true)
 	}
@@ -188,6 +205,7 @@ func (a *app) handle(m protocol.Message) {
 	case msgInitialize:
 		a.sendState()
 		a.sendHistory()
+		a.sendBatteryTest()
 		a.queue(trigger{advance: true, reason: "startup"})
 	case msgSaveConfig:
 		var next config.Config
@@ -200,6 +218,10 @@ func (a *app) handle(m protocol.Message) {
 		a.mu.RUnlock()
 		if next.APIKey == "" {
 			next.APIKey = old.APIKey
+		}
+		if err := next.Normalize(); err != nil {
+			a.sendError("Invalid settings", err)
+			return
 		}
 		if err := config.Save(a.configPath, next); err != nil {
 			a.sendError("Could not save settings", err)
@@ -243,6 +265,7 @@ func (a *app) handle(m protocol.Message) {
 	case msgDiagnostics:
 		a.send(msgDiagnosticsResult, a.diagnostics())
 	case msgResume:
+		a.recordBatteryWake()
 		a.queue(trigger{advance: false, reason: "resume"})
 	case msgResetSettings:
 		next := config.Defaults()
@@ -296,6 +319,12 @@ func (a *app) handle(m protocol.Message) {
 			a.sendImage(e, true)
 		}
 		a.sendState()
+	case msgBatteryStart:
+		a.startBatteryTest()
+	case msgBatteryStop:
+		a.stopBatteryTest()
+	case msgBatteryReset:
+		a.resetBatteryTest()
 	}
 }
 
@@ -313,7 +342,9 @@ func (a *app) scheduler() {
 			if ok {
 				backoff = time.Minute
 			} else {
-				refresh = backoff
+				if refresh <= 0 {
+					refresh = backoff
+				}
 				if backoff < 30*time.Minute {
 					backoff *= 2
 				}
@@ -330,7 +361,9 @@ func (a *app) scheduler() {
 			if ok {
 				backoff = time.Minute
 			} else {
-				refresh = backoff
+				if refresh <= 0 {
+					refresh = backoff
+				}
 				if backoff < 30*time.Minute {
 					backoff *= 2
 				}
@@ -361,8 +394,9 @@ func (a *app) fetch(t trigger) (bool, time.Duration) {
 	if err != nil {
 		a.record(t.reason, false, safeError(err))
 		a.sendError("Refresh failed; cached screen remains visible", err)
-		return false, 0
+		return false, retryDelay(err)
 	}
+	a.recordBatteryRefresh()
 	refresh := time.Duration(int(r.RefreshRate)) * time.Second
 	if refresh <= 0 {
 		refresh = 15 * time.Minute
@@ -375,22 +409,41 @@ func (a *app) fetch(t trigger) (bool, time.Duration) {
 	if name == "" {
 		name = filepath.Base(strings.Split(r.ImageURL, "?")[0])
 	}
-	if has && ((r.ImageName != "" && r.ImageName == latest.ImageName) || r.ImageURL == latest.ImageURL) {
+	etag, lastModified := "", ""
+	if has && r.ImageURL == latest.ImageURL {
+		etag, lastModified = latest.ETag, latest.LastModified
+	}
+	timeout := time.Duration(int(r.ImageURLTimeout)) * time.Second
+	body, h, err := a.client.Download(a.ctx, r.ImageURL, timeout, etag, lastModified)
+	if errors.Is(err, trmnl.ErrNotModified) && has {
 		a.sendImage(latest, false)
 		a.sendState()
-		a.record(t.reason, true, "unchanged; reused cache")
+		a.record(t.reason, true, "unchanged; server confirmed cached image")
 		a.sendStatus(fmt.Sprintf("Up to date · next refresh in %s", humanDuration(refresh)))
 		return true, refresh
 	}
-	timeout := time.Duration(int(r.ImageURLTimeout)) * time.Second
-	body, h, err := a.client.Download(a.ctx, r.ImageURL, timeout, "", "")
 	if err != nil {
 		a.record(t.reason, false, safeError(err))
 		a.sendError("Image download failed; cached screen remains visible", err)
-		return false, 0
+		return false, retryDelay(err)
 	}
 	defer body.Close()
-	entry, err := a.cache.Put(name, body, cache.Entry{ImageURL: r.ImageURL, ImageName: r.ImageName, ETag: h.Get("ETag"), LastModified: h.Get("Last-Modified")}, 25<<20, 8)
+	const maxImageBytes = 25 << 20
+	payload, err := io.ReadAll(io.LimitReader(body, maxImageBytes+1))
+	if err != nil || len(payload) == 0 || len(payload) > maxImageBytes {
+		if err == nil {
+			err = fmt.Errorf("invalid image size: %d", len(payload))
+		}
+		a.record(t.reason, false, safeError(err))
+		a.sendError("Image download was invalid; cached screen remains visible", err)
+		return false, 0
+	}
+	if err := validateImagePayload(payload); err != nil {
+		a.record(t.reason, false, safeError(err))
+		a.sendError("Image download was invalid; cached screen remains visible", err)
+		return false, 0
+	}
+	entry, err := a.cache.Put(name, bytes.NewReader(payload), cache.Entry{ImageURL: r.ImageURL, ImageName: r.ImageName, ETag: h.Get("ETag"), LastModified: h.Get("Last-Modified")}, maxImageBytes, 8)
 	if err != nil {
 		a.record(t.reason, false, safeError(err))
 		a.sendError("Could not cache image", err)
@@ -419,6 +472,10 @@ func (a *app) testConnection(contents string) {
 		if json.Unmarshal([]byte(contents), &candidate) == nil {
 			if candidate.APIKey == "" {
 				candidate.APIKey = cfg.APIKey
+			}
+			if err := candidate.Normalize(); err != nil {
+				a.send(msgTestResult, mustJSON(map[string]any{"ok": false, "message": safeError(err)}))
+				return
 			}
 			cfg = candidate
 		}
@@ -456,6 +513,9 @@ func (a *app) sendState() {
 	wakeAlarmError := a.wakeAlarmError
 	a.mu.RUnlock()
 	state := map[string]any{"config": cfg, "api_key_configured": hasKey, "version": version, "battery_percent": readBatteryPercent(), "wake_for_refresh_available": a.wake != nil}
+	if detectedID := readDeviceID(); detectedID != "" {
+		state["detected_device_id"] = detectedID
+	}
 	if !nextRefresh.IsZero() {
 		state["next_refresh"] = nextRefresh
 	}
@@ -544,6 +604,113 @@ func (a *app) sendHistory() {
 	a.send(msgHistory, mustJSON(h))
 }
 
+func (a *app) batterySampler() {
+	ticker := time.NewTicker(15 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			a.recordBatterySample(false)
+		case <-a.ctx.Done():
+			return
+		}
+	}
+}
+
+func (a *app) startBatteryTest() {
+	percent := readBatteryPercent()
+	if percent < 0 {
+		a.sendError("Battery test could not start", errors.New("battery percentage is unavailable"))
+		return
+	}
+	a.batteryMu.Lock()
+	err := a.batteryTest.Start(time.Now().UTC(), percent)
+	state := a.batteryTest.Clone()
+	a.batteryMu.Unlock()
+	if err != nil {
+		a.sendError("Battery test could not start", err)
+		return
+	}
+	atomicJSON(a.batteryPath, state, 0600)
+	a.sendBatteryTest()
+	a.sendStatus("Battery test started · unplug the charger for a useful estimate")
+}
+
+func (a *app) stopBatteryTest() {
+	a.batteryMu.Lock()
+	if !a.batteryTest.Active {
+		a.batteryMu.Unlock()
+		return
+	}
+	a.batteryTest.Stop(time.Now().UTC(), readBatteryPercent())
+	state := a.batteryTest.Clone()
+	a.batteryMu.Unlock()
+	atomicJSON(a.batteryPath, state, 0600)
+	a.sendBatteryTest()
+	a.sendStatus("Battery test stopped")
+}
+
+func (a *app) resetBatteryTest() {
+	a.batteryMu.Lock()
+	a.batteryTest.Reset()
+	state := a.batteryTest.Clone()
+	a.batteryMu.Unlock()
+	atomicJSON(a.batteryPath, state, 0600)
+	a.sendBatteryTest()
+	a.sendStatus("Battery test data reset")
+}
+
+func (a *app) recordBatterySample(force bool) {
+	percent := readBatteryPercent()
+	a.batteryMu.Lock()
+	if !a.batteryTest.Active {
+		a.batteryMu.Unlock()
+		return
+	}
+	a.batteryTest.AddSample(time.Now().UTC(), percent, force)
+	state := a.batteryTest.Clone()
+	a.batteryMu.Unlock()
+	atomicJSON(a.batteryPath, state, 0600)
+	a.sendBatteryTest()
+}
+
+func (a *app) recordBatteryRefresh() {
+	percent := readBatteryPercent()
+	a.batteryMu.Lock()
+	if !a.batteryTest.Active {
+		a.batteryMu.Unlock()
+		return
+	}
+	a.batteryTest.Refreshes++
+	a.batteryTest.AddSample(time.Now().UTC(), percent, false)
+	state := a.batteryTest.Clone()
+	a.batteryMu.Unlock()
+	atomicJSON(a.batteryPath, state, 0600)
+	a.sendBatteryTest()
+}
+
+func (a *app) recordBatteryWake() {
+	percent := readBatteryPercent()
+	a.batteryMu.Lock()
+	if !a.batteryTest.Active {
+		a.batteryMu.Unlock()
+		return
+	}
+	a.batteryTest.Wakes++
+	a.batteryTest.AddSample(time.Now().UTC(), percent, false)
+	state := a.batteryTest.Clone()
+	a.batteryMu.Unlock()
+	atomicJSON(a.batteryPath, state, 0600)
+	a.sendBatteryTest()
+}
+
+func (a *app) sendBatteryTest() {
+	a.batteryMu.Lock()
+	snapshot := a.batteryTest.Snapshot(time.Now().UTC(), readBatteryStatus())
+	a.batteryMu.Unlock()
+	a.send(msgBatteryTest, mustJSON(snapshot))
+}
+
 func (a *app) cleanup() {
 	a.restoreOnce.Do(func() {
 		a.mu.RLock()
@@ -594,6 +761,9 @@ func (a *app) diagnostics() string {
 	cfg := config.Redacted(a.cfg)
 	a.mu.RUnlock()
 	m := map[string]any{"version": version, "config": cfg, "cache_dir": a.cache.Dir, "data_dir": a.dataDir, "battery_percent": readBatteryPercent(), "display": readTrimmed("/sys/class/graphics/fb0/virtual_size"), "os": readTrimmed("/etc/os-release")}
+	a.batteryMu.Lock()
+	m["battery_test"] = a.batteryTest.Snapshot(time.Now().UTC(), readBatteryStatus())
+	a.batteryMu.Unlock()
 	if a.light != nil {
 		m["brightness"] = a.light
 	}
@@ -642,8 +812,32 @@ func (a *app) invertedView(source string) (string, error) {
 	return final, nil
 }
 
+func validateImagePayload(payload []byte) error {
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("decode image header: %w", err)
+	}
+	if format != "png" && format != "jpeg" && format != "bmp" {
+		return fmt.Errorf("unsupported image format %q", format)
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > 10000 || cfg.Height > 10000 || int64(cfg.Width)*int64(cfg.Height) > 40_000_000 {
+		return fmt.Errorf("unsafe image dimensions: %dx%d", cfg.Width, cfg.Height)
+	}
+	return nil
+}
+
 func readBatteryPercent() int {
 	return readBatteryPercentAt("/sys/class/power_supply")
+}
+func readBatteryStatus() string {
+	paths, _ := filepath.Glob("/sys/class/power_supply/*/capacity")
+	for _, p := range paths {
+		dir := filepath.Dir(p)
+		if readTrimmed(filepath.Join(dir, "type")) == "Battery" {
+			return readTrimmed(filepath.Join(dir, "status"))
+		}
+	}
+	return ""
 }
 
 func readBatteryPercentAt(root string) int {
@@ -665,12 +859,44 @@ func readBatteryPercentAt(root string) int {
 	}
 	return -1
 }
-func readBattery() string {
-	v := readBatteryPercent()
-	if v < 0 {
-		return ""
+func readBatteryVoltage() string {
+	return readBatteryVoltageAt("/sys/class/power_supply")
+}
+
+func readBatteryVoltageAt(root string) string {
+	paths, _ := filepath.Glob(filepath.Join(root, "*", "voltage_now"))
+	for _, p := range paths {
+		if readTrimmed(filepath.Join(filepath.Dir(p), "type")) != "Battery" {
+			continue
+		}
+		microvolts, err := strconv.ParseInt(readTrimmed(p), 10, 64)
+		if err == nil && microvolts > 0 {
+			return strconv.FormatFloat(float64(microvolts)/1_000_000, 'f', 3, 64)
+		}
 	}
-	return strconv.Itoa(v)
+	return ""
+}
+func readDeviceID() string {
+	return readDeviceIDAt("/sys/class/net")
+}
+
+func readDeviceIDAt(root string) string {
+	paths, _ := filepath.Glob(filepath.Join(root, "*", "address"))
+	sort.SliceStable(paths, func(i, j int) bool {
+		return filepath.Base(filepath.Dir(paths[i])) == "wlan0" && filepath.Base(filepath.Dir(paths[j])) != "wlan0"
+	})
+	for _, p := range paths {
+		name := filepath.Base(filepath.Dir(p))
+		if name == "lo" {
+			continue
+		}
+		value := strings.ToLower(readTrimmed(p))
+		hardware, err := net.ParseMAC(value)
+		if err == nil && len(hardware) == 6 && value != "00:00:00:00:00:00" {
+			return value
+		}
+	}
+	return ""
 }
 func readRSSI() string { return "" }
 func readTrimmed(p string) string {
@@ -689,6 +915,16 @@ func safeError(err error) string {
 		s = s[:i] + "credentials redacted"
 	}
 	return s
+}
+func retryDelay(err error) time.Duration {
+	var httpErr *trmnl.HTTPError
+	if errors.As(err, &httpErr) && httpErr.RetryAfter > 0 {
+		if httpErr.RetryAfter > 24*time.Hour {
+			return 24 * time.Hour
+		}
+		return httpErr.RetryAfter
+	}
+	return 0
 }
 func humanDuration(d time.Duration) string {
 	if d < time.Minute {

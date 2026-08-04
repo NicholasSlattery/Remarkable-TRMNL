@@ -17,7 +17,7 @@ value xochitl_pid "$(pidof xochitl 2>/dev/null || true)"
 xochitl_pid=$(pidof xochitl 2>/dev/null | awk '{print $1}')
 value xochitl_binary "$(readlink -f "/proc/$xochitl_pid/exe" 2>/dev/null || true)"
 value display_fb0 "$(cat /sys/class/graphics/fb0/virtual_size 2>/dev/null || true)"
-value display_modes "$(cat /sys/class/graphics/fb0/modes 2>/dev/null | tr '\n' ',' || true)"
+value display_modes "$(tr '\n' ',' </sys/class/graphics/fb0/modes 2>/dev/null || true)"
 value rotation "$(cat /sys/class/graphics/fb0/rotate 2>/dev/null || true)"
 value xovi_present "$([ -d /home/root/xovi ] && echo yes || echo no)"
 value xovi_files "$(find /home/root/xovi -maxdepth 2 -type f \( -name '*.so' -o -name '*.qmd' -o -name '*version*' \) -printf '%p;' 2>/dev/null | head -c 4000)"

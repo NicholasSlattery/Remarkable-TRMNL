@@ -11,8 +11,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -39,18 +39,24 @@ jobs:
           GOARCH: arm64
           CGO_ENABLED: "0"
         run: go build -buildvcs=false -trimpath -ldflags="-s -w -X main.version=$(cat VERSION)" -o /tmp/trmnl-remarkable ./backend/cmd/trmnl-remarkable
+      - name: AppLoad protocol integration
+        run: |
+          CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags='-s -w -X main.version=integration' -o /tmp/trmnl-backend ./backend/cmd/trmnl-remarkable
+          CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags='-s -w' -o /tmp/trmnl-mock ./backend/cmd/trmnl-mock
+          python3 tests/appload_harness.py /tmp/trmnl-backend /tmp/trmnl-mock
       - name: Dependency vulnerability scan
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
           govulncheck ./...
 
   codeql:
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       security-events: write
       packages: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: github/codeql-action/init@v3
         with:
           languages: go
