@@ -1,0 +1,17 @@
+{
+  "api_key": "",
+  "base_url": "https://trmnl.com",
+  "device_id": "",
+  "refresh_mode": "server",
+  "minimum_refresh_seconds": 60,
+  "fit_mode": "fit",
+  "orientation": "auto",
+  "invert": false,
+  "use_system_brightness": true,
+  "restore_brightness_on_exit": true,
+  "brightness_percent": 50,
+  "start_with_cache_offline": true,
+  "always_on": false,
+  "logging_level": "info",
+  "history_limit": 30
+}

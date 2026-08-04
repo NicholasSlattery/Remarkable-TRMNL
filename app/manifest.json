@@ -1,0 +1,8 @@
+{
+  "name": "TRMNL",
+  "loadsBackend": true,
+  "entry": "/ui/TRMNL.qml",
+  "id": "trmnl.remarkable",
+  "supportsScaling": true,
+  "canHaveMultipleFrontends": false
+}

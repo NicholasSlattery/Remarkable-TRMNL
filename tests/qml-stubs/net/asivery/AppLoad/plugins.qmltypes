@@ -1,0 +1,21 @@
+import QtQuick.tooling 1.2
+
+Module {
+    Component {
+        name: "AppLoad"
+        prototype: "QObject"
+        exports: ["net.asivery.AppLoad/AppLoad 1.0"]
+        Property { name: "applicationID"; type: "QString" }
+        Signal {
+            name: "messageReceived"
+            Parameter { name: "type"; type: "uint" }
+            Parameter { name: "contents"; type: "string" }
+        }
+        Method {
+            name: "sendMessage"
+            Parameter { name: "type"; type: "uint" }
+            Parameter { name: "contents"; type: "string" }
+        }
+        Method { name: "terminate" }
+    }
+}

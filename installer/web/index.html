@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>TRMNL Installer</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color:#171717; background:#efeee9; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px; }
+    main { width:min(760px,100%); background:#fff; border:1px solid #d8d5cc; border-radius:22px; box-shadow:0 18px 60px #0002; overflow:hidden; }
+    header { display:flex; align-items:center; gap:18px; padding:30px 34px 22px; border-bottom:1px solid #e7e4dc; }
+    header img { width:64px; height:64px; border-radius:14px; }
+    h1 { margin:0; font-size:30px; letter-spacing:-.03em; }
+    header p { margin:5px 0 0; color:#64615a; }
+    section { padding:28px 34px 34px; }
+    .steps { display:flex; gap:8px; margin-bottom:25px; }
+    .step { flex:1; height:6px; background:#ddd9cf; border-radius:9px; }
+    .step.on { background:#171717; }
+    h2 { font-size:22px; margin:0 0 8px; }
+    p { line-height:1.5; }
+    .hint { color:#666159; margin-top:0; }
+    label { display:block; font-weight:650; margin:18px 0 7px; }
+    input[type=text], input[type=password] { width:100%; padding:14px 15px; border:1px solid #bdb8ad; border-radius:10px; font-size:16px; }
+    input:focus { outline:3px solid #b7d8ff; border-color:#2878cf; }
+    .row { display:grid; grid-template-columns:1fr 2fr; gap:14px; }
+    button { border:0; border-radius:11px; padding:14px 20px; font-weight:750; font-size:16px; cursor:pointer; background:#171717; color:#fff; }
+    button.secondary { background:#ebe8e0; color:#24221f; }
+    button.danger { background:#8f2525; }
+    button:disabled { cursor:not-allowed; opacity:.45; }
+    .actions { display:flex; gap:11px; flex-wrap:wrap; margin-top:24px; }
+    .card { margin-top:20px; padding:18px; border:1px solid #d9d5ca; background:#f7f6f2; border-radius:12px; }
+    .device { display:grid; grid-template-columns:130px 1fr; gap:7px 12px; }
+    .device b { color:#5f5a51; }
+    code { overflow-wrap:anywhere; font-size:13px; }
+    .check { display:flex; gap:10px; align-items:flex-start; font-weight:500; line-height:1.4; }
+    .check input { width:19px; height:19px; margin-top:1px; }
+    #status { min-height:26px; margin-top:18px; font-weight:650; }
+    #status.error { color:#a22323; }
+    #status.ok { color:#166534; }
+    .spinner { display:inline-block; width:16px; height:16px; border:2px solid #bbb; border-top-color:#222; border-radius:50%; animation:spin .8s linear infinite; vertical-align:-3px; margin-right:7px; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    small { color:#716d65; }
+    @media(max-width:600px){ header,section{padding-left:21px;padding-right:21px}.row{grid-template-columns:1fr}.device{grid-template-columns:1fr} }
+  </style>
+</head>
+<body>
+<main>
+  <header><img src="/icon.png" alt=""><div><h1>TRMNL for reMarkable</h1><p>Easy installer · version {{VERSION}}</p></div></header>
+  <section>
+    <div class="steps"><div class="step on"></div><div class="step"></div><div class="step"></div></div>
+    <h2>Connect your reMarkable Paper Pro</h2>
+    <p class="hint">Plug the tablet into this computer with USB, enable SSH/developer access in Settings, and enter the password shown by the tablet. Nothing changes until you click Install.</p>
+    <div class="row">
+      <div><label for="host">Tablet address</label><input id="host" type="text" value="10.11.99.1" autocomplete="off"></div>
+      <div><label for="password">Tablet SSH password</label><input id="password" type="password" autocomplete="off" placeholder="Paste the password from tablet settings"></div>
+    </div>
+    <div class="actions"><button id="find">Find my tablet</button><button id="quit" class="secondary">Close installer</button></div>
+    <div id="deviceCard" class="card" hidden>
+      <div class="device"><b>Device</b><span id="model"></span><b>Firmware</b><span id="os"></span><b>Fingerprint</b><code id="fingerprint"></code><b>Status</b><span id="installed"></span></div>
+      <label class="check"><input id="trust" type="checkbox"><span>I recognize this as my tablet and approve this fingerprint. The installer will not continue if it changes.</span></label>
+      <div class="actions">
+        <button id="install" disabled>Install TRMNL</button>
+        <button id="recover" class="secondary" disabled>Restore stock interface</button>
+        <button id="uninstall" class="danger" disabled>Uninstall TRMNL</button>
+      </div>
+    </div>
+    <div id="status" role="status" aria-live="polite"></div>
+    <small>Your password stays in this installer process and is never saved, logged, or sent over the internet.</small>
+  </section>
+</main>
+<script>
+const csrf='{{CSRF}}';
+const $=id=>document.getElementById(id);
+let fingerprint='', compatible=false, installed=false;
+function creds(){return {host:$('host').value.trim(),password:$('password').value,fingerprint};}
+function busy(message){$('status').className='';$('status').innerHTML='<span class="spinner"></span>'+message;document.querySelectorAll('button').forEach(b=>b.disabled=true);}
+function done(message,ok){$('status').textContent=message;$('status').className=ok?'ok':'error';$('find').disabled=false;$('quit').disabled=false;updateButtons();}
+function updateButtons(){const trusted=$('trust').checked;$('install').disabled=!(trusted&&compatible);$('recover').disabled=!(trusted&&installed);$('uninstall').disabled=!(trusted&&installed);}
+async function call(path, body){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-TRMNL-CSRF':csrf},body:JSON.stringify(body)});let data;try{data=await response.json();}catch{data={message:'The installer returned an unreadable response.'};}if(!response.ok)throw new Error(data.message||'Request failed');return data;}
+$('find').onclick=async()=>{if(!$('password').value){done('Enter the SSH password shown in the tablet settings.',false);return;}busy('Looking for your tablet…');try{const d=await call('/api/preflight',creds());fingerprint=d.fingerprint;compatible=d.compatible;installed=d.installed;$('model').textContent=d.model||'Unknown';$('os').textContent=d.os_version||'Unknown';$('fingerprint').textContent=fingerprint;$('installed').textContent=installed?'TRMNL is installed':'Ready to install';$('deviceCard').hidden=false;$('trust').checked=false;done(d.message,d.compatible);}catch(e){done(e.message,false);}};
+$('trust').onchange=updateButtons;
+$('install').onclick=async()=>{busy('Uploading and installing TRMNL. Keep the tablet connected…');try{const d=await call('/api/install',creds());installed=true;$('installed').textContent='TRMNL is installed';done(d.message,true);}catch(e){done(e.message,false);}};
+$('recover').onclick=async()=>{if(!confirm('Restore the stock interface and temporarily disable TRMNL? Your settings will stay on the tablet.'))return;busy('Restoring the stock interface…');try{const d=await call('/api/recover',creds());done(d.message,true);}catch(e){done(e.message,false);}};
+$('uninstall').onclick=async()=>{if(!confirm('Remove TRMNL from this tablet? Settings and cached screens will be preserved.'))return;busy('Removing TRMNL…');try{const d=await call('/api/uninstall',creds());installed=false;$('installed').textContent='Not installed';done(d.message,true);}catch(e){done(e.message,false);}};
+$('quit').onclick=async()=>{try{await call('/api/quit',{});}finally{document.body.innerHTML='<main><section><h2>Installer closed</h2><p>You can close this browser tab.</p></section></main>';}};
+</script>
+</body>
+</html>

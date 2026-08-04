@@ -1,0 +1,15 @@
+/_upstream/
+/_downloads/
+/_secrets/
+/_tools/
+/build/
+/dist/
+/release/
+*.log
+config.json
+/cache/
+.idea/
+.vscode/
+coverage.out
+__pycache__/
+*.pyc
