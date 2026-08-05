@@ -16,12 +16,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.2"
+          modules: qtdeclarative
       - name: Install static-analysis tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y shellcheck qt6-base-dev qt6-declarative-dev-tools
-          echo "/usr/lib/qt6/bin" >> "$GITHUB_PATH"
-          echo "/usr/lib/qt6/libexec" >> "$GITHUB_PATH"
+          sudo apt-get install -y shellcheck
       - name: Formatting
         run: test -z "$(gofmt -l backend installer)"
       - name: Unit tests and vet
@@ -34,7 +36,7 @@ jobs:
           python3 -m compileall -q scripts tests
       - name: QML lint and resources
         run: |
-          qmllint -I tests/qml-stubs app/ui/TRMNL.qml
+          qmllint -W 0 -I tests/qml-stubs app/ui/TRMNL.qml
           rcc --binary -o /tmp/resources.rcc app/application.qrc
           test -s /tmp/resources.rcc
       - name: ARM64 build
