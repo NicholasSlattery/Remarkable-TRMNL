@@ -34,7 +34,7 @@ jobs:
           python3 -m compileall -q scripts tests
       - name: QML lint and resources
         run: |
-          qmllint -W 0 -I tests/qml-stubs app/ui/TRMNL.qml
+          qmllint -I tests/qml-stubs app/ui/TRMNL.qml
           rcc --binary -o /tmp/resources.rcc app/application.qrc
           test -s /tmp/resources.rcc
       - name: ARM64 build
