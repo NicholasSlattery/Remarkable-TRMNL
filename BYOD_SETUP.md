@@ -8,13 +8,9 @@ are not required; enter your HTTPS BYOS origin and its device identity instead.
 
 The hosted TRMNL service requires one BYOD license for a third-party device.
 
-**Placeholder affiliate product link:**
-[Buy TRMNL BYOD](https://shop.trmnl.com/products/byod?ref=YOUR_AFFILIATE_ID)
+[Buy TRMNL BYOD](https://shop.trmnl.com/products/byod)
 
-`YOUR_AFFILIATE_ID` is deliberately a placeholder and must be replaced by the
-maintainer before advertising. If a real affiliate code is later inserted, say
-near the link that the maintainer may earn a commission and whether the buyer's
-price is unchanged. Until then, this link provides no affiliate credit.
+This is a direct, non-affiliate product link; the project receives no commission.
 
 After purchase, sign in to TRMNL and use the order number to claim/add the BYOD
 device. TRMNL's current help center explains the claim and Friendly ID flow:
@@ -62,5 +58,5 @@ Tap **Next screen** and confirm a playlist image appears. In diagnostics, check
 that the last refresh succeeded and that the next refresh time is present.
 
 An HTTP 401/403 usually means the wrong key or unclaimed device. A `user_...`
-value is definitely the wrong key. An HTTP 429 is rate limiting; v1.1 honors the
+value is definitely the wrong key. An HTTP 429 is rate limiting; the client honors the
 server's `Retry-After` value instead of repeatedly requesting.

@@ -1,6 +1,6 @@
 # Launch and advertising kit
 
-Do not advertise v1.1 as released until every blocking item in
+Do not advertise v2.0 as released until every blocking item in
 `RELEASE_CHECKLIST.md` is complete and the draft GitHub Release is reviewed.
 
 ## Product listing copy
@@ -21,7 +21,7 @@ the tablet and reduces security. Hosted TRMNL use requires a BYOD license.
 
 ## Suggested release announcement
 
-> TRMNL for reMarkable Paper Pro v1.1 brings TRMNL playlists to the 1620x2160
+> TRMNL for reMarkable Paper Pro v2.0 brings TRMNL playlists to the 1620x2160
 > color e-paper display, including scheduled refresh, offline cache, frontlight
 > controls, diagnostics, and a battery-life test. Installation is handled by a
 > local Windows interface with model/firmware gates, SSH fingerprint confirmation,
@@ -39,15 +39,14 @@ so users see checksums, validation evidence, requirements, and known limitations
 - Recovery image: Reactivate/Restore/Uninstall actions.
 - 20-40 second uncut install-to-dashboard video.
 
-Use actual v1.1 UI and exact-release hardware. Do not mock screenshots or claim
+Use actual v2.0 UI and exact-release hardware. Do not mock screenshots or claim
 real-cloud color, automatic rotation, signed-publisher status, firmware support,
 or battery duration beyond collected evidence.
 
 Recommended topics/keywords: `remarkable`, `remarkable-paper-pro`, `trmnl`,
 `epaper`, `eink`, `dashboard`, `byod`, `qml`, `golang`, `windows-installer`.
 
-## BYOD affiliate disclosure
+## BYOD link disclosure
 
-`BYOD_SETUP.md` contains `YOUR_AFFILIATE_ID` intentionally. Before advertising,
-either replace it with an approved code and add a clear commission disclosure at
-the link, or remove the `ref` parameter. Never imply TRMNL endorsement.
+`BYOD_SETUP.md` uses a direct, non-affiliate product link. Never imply TRMNL
+endorsement or add affiliate tracking without a clear commission disclosure.

@@ -18,14 +18,14 @@ func TestDisplayHeadersAndFlexibleRate(t *testing.T) {
 		if r.Header.Get("access-token") != "sekret" || r.Header.Get("ID") != "AA:BB" {
 			t.Errorf("missing auth headers")
 		}
-		if r.Header.Get("battery-voltage") != "3.925" || r.Header.Get("firmware-version") != "1.1.0" {
+		if r.Header.Get("battery-voltage") != "3.925" || r.Header.Get("firmware-version") != "2.0.0" {
 			t.Errorf("incorrect device metadata headers: %#v", r.Header)
 		}
 		fmt.Fprint(w, `{"status":0,"image_url":"https://example.test/a.png","refresh_rate":"1800","special_function":"sleep"}`)
 	}))
 	defer s.Close()
 	c := New()
-	c.Version = "1.1.0"
+	c.Version = "2.0.0"
 	c.Battery = func() string { return "3.925" }
 	cfg := config.Defaults()
 	cfg.BaseURL = s.URL

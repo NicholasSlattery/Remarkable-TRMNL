@@ -642,7 +642,7 @@ func (a *app) stopBatteryTest() {
 		a.batteryMu.Unlock()
 		return
 	}
-	a.batteryTest.Stop(time.Now().UTC(), readBatteryPercent())
+	a.batteryTest.StopWithStatus(time.Now().UTC(), readBatteryPercent(), readBatteryStatus())
 	state := a.batteryTest.Clone()
 	a.batteryMu.Unlock()
 	atomicJSON(a.batteryPath, state, 0600)
@@ -667,7 +667,7 @@ func (a *app) recordBatterySample(force bool) {
 		a.batteryMu.Unlock()
 		return
 	}
-	a.batteryTest.AddSample(time.Now().UTC(), percent, force)
+	a.batteryTest.AddSampleWithStatus(time.Now().UTC(), percent, force, readBatteryStatus())
 	state := a.batteryTest.Clone()
 	a.batteryMu.Unlock()
 	atomicJSON(a.batteryPath, state, 0600)
@@ -682,7 +682,7 @@ func (a *app) recordBatteryRefresh() {
 		return
 	}
 	a.batteryTest.Refreshes++
-	a.batteryTest.AddSample(time.Now().UTC(), percent, false)
+	a.batteryTest.AddSampleWithStatus(time.Now().UTC(), percent, false, readBatteryStatus())
 	state := a.batteryTest.Clone()
 	a.batteryMu.Unlock()
 	atomicJSON(a.batteryPath, state, 0600)
@@ -697,7 +697,7 @@ func (a *app) recordBatteryWake() {
 		return
 	}
 	a.batteryTest.Wakes++
-	a.batteryTest.AddSample(time.Now().UTC(), percent, false)
+	a.batteryTest.AddSampleWithStatus(time.Now().UTC(), percent, false, readBatteryStatus())
 	state := a.batteryTest.Clone()
 	a.batteryMu.Unlock()
 	atomicJSON(a.batteryPath, state, 0600)

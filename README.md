@@ -30,7 +30,7 @@ correct Device API key, and configuring the Paper Pro model. See
 
 ## Install without a terminal
 
-1. Download `TRMNL-for-reMarkable-1.1.0-Windows-x64.zip` and
+1. Download `TRMNL-for-reMarkable-2.0.0-Windows-x64.zip` and
    `SHA256SUMS.txt` from the same GitHub Release.
 2. Verify the ZIP checksum, extract the whole ZIP, and double-click
    **TRMNL Installer.exe**.
@@ -46,9 +46,10 @@ before changing the tablet. Detailed steps are in [EASY_INSTALL.md](EASY_INSTALL
 
 Windows releases include an application icon, requested-execution manifest,
 Windows 10/11 compatibility metadata, and file/product version information.
-Authenticode signing is supported by the release pipeline. If a release says
-**Unknown publisher**, it was not certificate-signed: verify its SHA-256 before
-deciding whether to run it.
+Authenticode signing is supported by the release pipeline. The v2.0 community
+build is self-signed, so Windows can still report an unknown or untrusted
+publisher until its included public certificate is trusted locally. Always
+verify the ZIP SHA-256 before deciding whether to run it.
 
 ## Developer Mode, clearly
 
@@ -86,7 +87,8 @@ the **Return to reMarkable** button, or a two-second upper-left hold.
 
 Settings also includes a battery-life test. After charging and unplugging, it
 records lightweight 15-minute samples, refreshes, and wake events, survives
-normal suspend/app restarts, and estimates runtime after at least a 2% drop.
+normal suspend/app restarts, rejects tests that include charging, and estimates
+runtime after at least a 10% drop.
 
 ## Reboot, recovery, and removal
 
@@ -113,12 +115,14 @@ boot partitions, or global power policy. Persistent paths are documented in
 - "Auto" orientation follows image layout; this app has no reliable physical
   rotation signal from the Paper Pro.
 - Wake-for-refresh is enabled by default when firmware exposes a writable RTC
-  alarm. The current image remains visible during normal suspend.
+  alarm. For dashboard use, enable reMarkable Auto-sleep and Light sleep, leave
+  Auto power-off disabled, and use a longer minimum refresh interval. The
+  current image remains visible during normal suspend.
 - `always_on` is retained for compatibility but never overrides the tablet's
   safety-critical power policy.
 - Production authentication and monochrome cloud output have been exercised.
   Real-cloud color output must be rechecked for each release/plugin combination.
-- v1.1 host/API validation is recorded in [V1.1_VALIDATION.md](V1.1_VALIDATION.md).
+- v2.0 validation is recorded in [V2.0_VALIDATION.md](V2.0_VALIDATION.md).
   Exact-release physical checks remain required before publishing a release.
 
 ## Build and test from source
@@ -130,7 +134,7 @@ upstream runtime downloads.
 ```powershell
 ./scripts/build.ps1
 ./scripts/test-linux-integration.ps1
-./scripts/build-release.ps1 -Version 1.1.0
+./scripts/build-release.ps1 -Version 2.0.0
 ```
 
 `build.ps1` runs formatting, unit tests, `go vet`, ARM64 cross-compilation,
@@ -144,6 +148,9 @@ ARM64 build, the AppLoad protocol harness, and `govulncheck`. Public releases
 also receive GitHub build-provenance attestations. Maintainers can configure
 `WINDOWS_SIGNING_CERT_BASE64` and `WINDOWS_SIGNING_CERT_PASSWORD` secrets to
 Authenticode-sign the installer before packaging.
+Maintainers without a publicly trusted certificate can instead run
+`scripts/sign-self-signed-release.ps1`; this signs the executable and bundles
+the public certificate, but does not remove Windows trust warnings.
 
 ## Architecture and API policy
 

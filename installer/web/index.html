@@ -1,95 +1,547 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="paper">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>TRMNL Installer</title>
+  <meta name="color-scheme" content="light dark">
+  <title>TRMNL for reMarkable · Installer</title>
   <style>
-    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color:#171717; background:#efeee9; }
+    /* ------------------------------------------------------------------
+       E-ink design system.
+       Paper is the default surface; Ink is the inverted (dark) surface.
+       No blur, no gradients-as-glow, no saturated colour: state is carried
+       by weight, hatching and inversion, the way an e-paper panel does it.
+    ------------------------------------------------------------------ */
+    :root {
+      --paper:#e7e4dc;
+      --sheet:#f5f3ee;
+      --sheet-2:#ebe8e1;
+      --ink:#16150f;
+      --ink-70:#4b483f;
+      --ink-45:#7d796e;
+      --ink-20:#c3bfb4;
+      --line:#16150f;
+      --hair:#00000026;
+      --cast:#16150f1f;
+      --sans:"Segoe UI Variable Text","Segoe UI",Inter,-apple-system,system-ui,"Helvetica Neue",sans-serif;
+      --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+      --mono:"Cascadia Mono",ui-monospace,"SF Mono",Consolas,"Liberation Mono",monospace;
+      --step:clamp(14px,1.1vw,16px);
+      --icon-filter:grayscale(1) contrast(1.22) brightness(.96);
+    }
+    :root[data-theme="ink"] {
+      --paper:#0e0e0b;
+      --sheet:#191813;
+      --sheet-2:#211f19;
+      --ink:#efece2;
+      --ink-70:#b3afa2;
+      --ink-45:#858175;
+      --ink-20:#3d3a32;
+      --line:#efece2;
+      --hair:#ffffff2b;
+      --cast:#00000066;
+      --icon-filter:grayscale(1) contrast(1.1) invert(1) brightness(1.1);
+    }
+
     * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px; }
-    main { width:min(760px,100%); background:#fff; border:1px solid #d8d5cc; border-radius:22px; box-shadow:0 18px 60px #0002; overflow:hidden; }
-    header { display:flex; align-items:center; gap:18px; padding:30px 34px 22px; border-bottom:1px solid #e7e4dc; }
-    header img { width:64px; height:64px; border-radius:14px; }
-    h1 { margin:0; font-size:30px; letter-spacing:-.03em; }
-    header p { margin:5px 0 0; color:#64615a; }
-    section { padding:28px 34px 34px; }
-    .steps { display:flex; gap:8px; margin-bottom:25px; }
-    .step { flex:1; height:6px; background:#ddd9cf; border-radius:9px; }
-    .step.on { background:#171717; }
-    h2 { font-size:22px; margin:0 0 8px; }
-    p { line-height:1.5; }
-    .hint { color:#666159; margin-top:0; }
-    .warning { margin:16px 0; padding:14px 16px; border:1px solid #c98320; border-radius:10px; background:#fff5df; line-height:1.45; }
-    label { display:block; font-weight:650; margin:18px 0 7px; }
-    input[type=text], input[type=password] { width:100%; padding:14px 15px; border:1px solid #bdb8ad; border-radius:10px; font-size:16px; }
-    input:focus { outline:3px solid #b7d8ff; border-color:#2878cf; }
-    .row { display:grid; grid-template-columns:1fr 2fr; gap:14px; }
-    button { border:0; border-radius:11px; padding:14px 20px; font-weight:750; font-size:16px; cursor:pointer; background:#171717; color:#fff; }
-    button.secondary { background:#ebe8e0; color:#24221f; }
-    button.danger { background:#8f2525; }
-    button:disabled { cursor:not-allowed; opacity:.45; }
-    .actions { display:flex; gap:11px; flex-wrap:wrap; margin-top:24px; }
-    .card { margin-top:20px; padding:18px; border:1px solid #d9d5ca; background:#f7f6f2; border-radius:12px; }
-    .device { display:grid; grid-template-columns:130px 1fr; gap:7px 12px; }
-    .device b { color:#5f5a51; }
-    code { overflow-wrap:anywhere; font-size:13px; }
-    .check { display:flex; gap:10px; align-items:flex-start; font-weight:500; line-height:1.4; }
-    .check input { width:19px; height:19px; margin-top:1px; }
-    #status { min-height:26px; margin-top:18px; font-weight:650; }
-    #status.error { color:#a22323; }
-    #status.ok { color:#166534; }
-    .spinner { display:inline-block; width:16px; height:16px; border:2px solid #bbb; border-top-color:#222; border-radius:50%; animation:spin .8s linear infinite; vertical-align:-3px; margin-right:7px; }
-    @keyframes spin { to { transform:rotate(360deg); } }
-    small { color:#716d65; }
-    @media(max-width:600px){ header,section{padding-left:21px;padding-right:21px}.row{grid-template-columns:1fr}.device{grid-template-columns:1fr} }
+    html { -webkit-text-size-adjust:100%; }
+    body {
+      margin:0; min-height:100vh;
+      background:var(--paper);
+      background-image:radial-gradient(var(--ink-20) .5px, transparent .6px);
+      background-size:4px 4px;
+      color:var(--ink);
+      font-family:var(--sans);
+      font-size:var(--step);
+      line-height:1.55;
+      display:flex; flex-direction:column;
+    }
+
+    /* Paper grain ------------------------------------------------------ */
+    .grain { position:fixed; inset:0; width:100%; height:100%; pointer-events:none; z-index:60; opacity:.06; mix-blend-mode:multiply; }
+    :root[data-theme="ink"] .grain { mix-blend-mode:screen; opacity:.05; }
+
+    /* Status bar ------------------------------------------------------- */
+    .bar {
+      position:sticky; top:0; z-index:40;
+      display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+      padding:10px clamp(16px,4vw,44px);
+      background:var(--paper);
+      border-bottom:1.5px solid var(--line);
+      font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+    }
+    .bar__mark { font-weight:700; letter-spacing:.26em; }
+    .bar__slash { color:var(--ink-45); }
+    .bar__spacer { flex:1 1 auto; }
+    .bar__meta { color:var(--ink-70); white-space:nowrap; }
+    .dot { display:inline-block; width:7px; height:7px; margin-right:7px; border:1.5px solid var(--line); vertical-align:1px; }
+    .dot.live { background:var(--ink); }
+
+    .chip {
+      font:inherit; text-transform:uppercase; letter-spacing:.14em;
+      padding:5px 11px; border:1.5px solid var(--line); border-radius:2px;
+      background:transparent; color:var(--ink); cursor:pointer;
+    }
+    .chip:hover { background:var(--ink); color:var(--paper); }
+    .chip[aria-pressed="true"] { background:var(--ink); color:var(--paper); }
+
+    /* Sheet ------------------------------------------------------------ */
+    .wrap { flex:1 0 auto; width:100%; padding:clamp(20px,4.5vw,52px) clamp(14px,4vw,44px) 40px; display:flex; justify-content:center; align-items:flex-start; }
+    .sheet {
+      width:min(860px,100%);
+      background:var(--sheet);
+      border:1.5px solid var(--line);
+      box-shadow:8px 8px 0 var(--cast);
+    }
+
+    .masthead { display:flex; gap:clamp(14px,2.4vw,24px); align-items:center; padding:clamp(22px,3.4vw,34px) clamp(20px,3.6vw,38px); border-bottom:1.5px solid var(--line); }
+    .masthead img { width:60px; height:60px; border:1.5px solid var(--line); filter:var(--icon-filter); image-rendering:auto; }
+    h1 { margin:0; font-family:var(--serif); font-size:clamp(26px,3.6vw,36px); font-weight:600; letter-spacing:-.015em; line-height:1.1; }
+    .masthead p { margin:7px 0 0; font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-70); }
+
+    /* Progress ruler --------------------------------------------------- */
+    .progress { display:grid; grid-template-columns:repeat(3,1fr); border-bottom:1.5px solid var(--line); }
+    .progress li { list-style:none; padding:13px 16px 12px; border-right:1.5px solid var(--line); }
+    .progress li:last-child { border-right:0; }
+    .progress .track { height:7px; border:1.5px solid var(--line); background-image:radial-gradient(var(--ink-45) .6px, transparent .7px); background-size:3px 3px; }
+    .progress .num { display:block; margin-top:9px; font-family:var(--mono); font-size:10.5px; letter-spacing:.18em; text-transform:uppercase; color:var(--ink-45); }
+    .progress li.on .track { background:var(--ink); background-image:none; }
+    .progress li.on .num { color:var(--ink); font-weight:700; }
+    .progress li.done .track { background:var(--ink); background-image:none; opacity:.42; }
+
+    /* Content ---------------------------------------------------------- */
+    .pane { padding:clamp(22px,3.6vw,38px); }
+    .pane[hidden] { display:none; }
+    h2 { margin:0 0 10px; font-family:var(--serif); font-size:clamp(20px,2.4vw,25px); font-weight:600; letter-spacing:-.01em; }
+    .lede { margin:0; max-width:62ch; color:var(--ink-70); }
+
+    .rule { height:1.5px; background:var(--line); margin:clamp(22px,3vw,30px) 0; opacity:.9; }
+    .rule--hatch { height:9px; background:repeating-linear-gradient(45deg,var(--ink) 0 1.5px,transparent 1.5px 6px); opacity:.55; }
+
+    .eyebrow { font-family:var(--mono); font-size:10.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--ink-45); margin:0 0 12px; }
+
+    .notice { margin:22px 0 0; padding:16px 18px; border:1.5px solid var(--line); background:var(--sheet-2); position:relative; }
+    .notice::before { content:""; position:absolute; inset:0 auto 0 0; width:6px; background:repeating-linear-gradient(135deg,var(--ink) 0 1.5px,transparent 1.5px 5px); }
+    .notice b { display:block; margin-bottom:5px; font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; }
+    .notice p { margin:0; padding-left:12px; color:var(--ink-70); font-size:14px; }
+    .notice b { padding-left:12px; }
+
+    /* Fields ----------------------------------------------------------- */
+    .fields { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.35fr); gap:clamp(16px,2.4vw,26px); margin-top:26px; }
+    .field { min-width:0; }
+    .field > label { display:block; font-family:var(--mono); font-size:10.5px; letter-spacing:.18em; text-transform:uppercase; color:var(--ink-70); margin-bottom:8px; }
+    .input-shell { display:flex; align-items:stretch; border:1.5px solid var(--line); background:var(--sheet-2); }
+    .input-shell:focus-within { outline:2.5px solid var(--ink); outline-offset:2px; }
+    input[type=text], input[type=password] {
+      flex:1 1 auto; min-width:0; width:100%;
+      padding:13px 14px; border:0; background:transparent; color:var(--ink);
+      font-family:var(--mono); font-size:15px; letter-spacing:.06em;
+    }
+    input:focus { outline:none; }
+    input::placeholder { color:var(--ink-45); letter-spacing:0; }
+    .reveal {
+      flex:0 0 auto; border:0; border-left:1.5px solid var(--line); background:transparent; color:var(--ink);
+      padding:0 14px; cursor:pointer;
+      font-family:var(--mono); font-size:10.5px; letter-spacing:.14em; text-transform:uppercase;
+    }
+    .reveal:hover { background:var(--ink); color:var(--sheet); }
+    .reveal[aria-pressed="true"] { background:var(--ink); color:var(--sheet); }
+    .field-note { margin:8px 0 0; font-family:var(--mono); font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-45); }
+
+    /* Revealed key readout --------------------------------------------- */
+    .keyout { margin-top:12px; border:1.5px solid var(--line); background:var(--sheet); padding:12px 13px; }
+    .keyout[hidden] { display:none; }
+    .keyout .cap { font-family:var(--mono); font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--ink-45); margin-bottom:9px; }
+    .cells { display:flex; flex-wrap:wrap; gap:5px; }
+    .cells span {
+      min-width:30px; height:38px; display:grid; place-items:center;
+      border:1.5px solid var(--line); background:var(--sheet-2);
+      font-family:var(--mono); font-size:18px; line-height:1;
+    }
+    .plainkey { font-family:var(--mono); font-size:15px; overflow-wrap:anywhere; letter-spacing:.06em; }
+
+    /* Buttons ---------------------------------------------------------- */
+    .actions { display:flex; flex-wrap:wrap; gap:11px; margin-top:26px; }
+    .btn {
+      font-family:var(--sans); font-size:15px; font-weight:650; letter-spacing:.005em;
+      padding:13px 20px; border:1.5px solid var(--line); border-radius:2px;
+      background:var(--sheet-2); color:var(--ink); cursor:pointer;
+      box-shadow:3px 3px 0 var(--cast);
+      transition:transform 80ms steps(2,end), box-shadow 80ms steps(2,end);
+    }
+    .btn:hover:not(:disabled) { background:var(--ink); color:var(--sheet); }
+    .btn:active:not(:disabled) { transform:translate(3px,3px); box-shadow:0 0 0 var(--cast); }
+    .btn--primary { background:var(--ink); color:var(--sheet); }
+    .btn--primary:hover:not(:disabled) { background:var(--sheet-2); color:var(--ink); }
+    .btn--danger { background:transparent; background-image:repeating-linear-gradient(45deg,var(--hair) 0 1.5px,transparent 1.5px 7px); }
+    .btn:disabled { cursor:not-allowed; color:var(--ink-45); border-color:var(--ink-20); box-shadow:none; background-image:none; background:transparent; }
+    :focus-visible { outline:2.5px solid var(--ink); outline-offset:2px; }
+
+    /* Device spec sheet ------------------------------------------------ */
+    .card { margin-top:26px; border:1.5px solid var(--line); background:var(--sheet-2); }
+    .card[hidden] { display:none; }
+    .card__head { padding:11px 16px; border-bottom:1.5px solid var(--line); font-family:var(--mono); font-size:10.5px; letter-spacing:.2em; text-transform:uppercase; display:flex; justify-content:space-between; gap:10px; }
+    .card__body { padding:16px; }
+    .spec { display:grid; grid-template-columns:150px minmax(0,1fr); gap:10px 14px; align-items:baseline; }
+    .spec dt { font-family:var(--mono); font-size:10.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-45); position:relative; overflow:hidden; white-space:nowrap; }
+    .spec dt::after { content:" ·······································································"; color:var(--ink-20); }
+    .spec dd { margin:0; min-width:0; font-family:var(--mono); font-size:14px; overflow-wrap:anywhere; }
+
+    .check { display:flex; gap:12px; align-items:flex-start; margin-top:20px; padding-top:18px; border-top:1.5px dashed var(--ink-20); cursor:pointer; font-size:14px; line-height:1.45; color:var(--ink-70); }
+    .check input { appearance:none; -webkit-appearance:none; flex:0 0 auto; width:22px; height:22px; margin:1px 0 0; border:1.5px solid var(--line); background:var(--sheet); display:grid; place-items:center; cursor:pointer; }
+    .check input::after { content:"✓"; font-size:15px; line-height:1; color:var(--sheet); opacity:0; }
+    .check input:checked { background:var(--ink); }
+    .check input:checked::after { opacity:1; }
+
+    .zone { margin-top:26px; border:1.5px solid var(--line); }
+    .zone__head { padding:10px 16px; border-bottom:1.5px solid var(--line); font-family:var(--mono); font-size:10.5px; letter-spacing:.2em; text-transform:uppercase; background-image:repeating-linear-gradient(45deg,var(--hair) 0 1.5px,transparent 1.5px 7px); }
+    .zone__body { padding:16px; }
+    .zone .actions { margin-top:0; }
+    .zone p { margin:0 0 14px; font-size:13.5px; color:var(--ink-70); max-width:60ch; }
+
+    /* Status ----------------------------------------------------------- */
+    .status { display:flex; align-items:flex-start; gap:12px; margin-top:26px; min-height:46px; padding:13px 15px; border:1.5px solid var(--ink-20); background:var(--sheet-2); font-size:14.5px; line-height:1.45; }
+    .status.is-ok, .status.is-error, .status.is-busy { border-color:var(--line); }
+    .status .badge { flex:0 0 auto; width:24px; height:24px; display:grid; place-items:center; border:1.5px solid var(--line); font-family:var(--mono); font-size:13px; }
+    .status.is-ok .badge { background:var(--ink); color:var(--sheet); }
+    .status.is-error .badge { background-image:repeating-linear-gradient(45deg,var(--ink) 0 1.5px,transparent 1.5px 5px); font-weight:700; }
+    .status.is-idle .badge { color:var(--ink-45); border-color:var(--ink-20); }
+    .status .msg { flex:1 1 auto; min-width:0; }
+
+    .ticker { display:inline-flex; gap:3px; vertical-align:-1px; }
+    .ticker i { width:6px; height:12px; background:var(--ink); opacity:.25; animation:tick 1.5s ease-in-out infinite; }
+    .ticker i:nth-child(2) { animation-delay:.25s; }
+    .ticker i:nth-child(3) { animation-delay:.5s; }
+    @keyframes tick { 0%,60%,100% { opacity:.25; } 25% { opacity:.85; } }
+
+    .colophon { padding:18px clamp(16px,4vw,44px) 30px; text-align:center; font-family:var(--mono); font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-45); }
+    .colophon span { display:block; max-width:78ch; margin:0 auto; text-transform:none; letter-spacing:.02em; font-size:12px; line-height:1.6; }
+
+    @media (max-width:720px) {
+      .fields { grid-template-columns:1fr; }
+      .spec { grid-template-columns:1fr; gap:3px 0; }
+      .spec dt::after { content:""; }
+      .progress { grid-template-columns:1fr; }
+      .progress li { border-right:0; border-bottom:1.5px solid var(--line); }
+      .progress li:last-child { border-bottom:0; }
+      .masthead { flex-direction:column; align-items:flex-start; }
+      .btn { flex:1 1 auto; }
+    }
+    @media (prefers-reduced-motion:reduce) {
+      .ticker i { animation:none; opacity:.6; }
+      .btn { transition:none; }
+    }
+    @media print {
+      .bar, .grain, .actions, .colophon { display:none !important; }
+      body { background:#fff; } .sheet { box-shadow:none; }
+    }
   </style>
 </head>
 <body>
-<main>
-  <header><img src="/icon.png" alt=""><div><h1>TRMNL for reMarkable</h1><p>Easy installer · version {{VERSION}}</p></div></header>
-  <section>
-    <div class="steps"><div class="step on"></div><div class="step"></div><div class="step"></div></div>
-    <h2>Connect your reMarkable Paper Pro</h2>
-    <p class="hint">Plug the tablet into this computer with USB, enable SSH/developer access in Settings, and enter the password shown by the tablet. Nothing changes until you click Install.</p>
-    <div class="warning"><b>Developer Mode is required.</b> Enabling it factory-resets the Paper Pro, weakens secure-boot protections, and can affect support or warranty coverage. Back up and sync your files first. Restoring the normal interface below does not disable Developer Mode.</div>
-    <div class="row">
-      <div><label for="host">Tablet address</label><input id="host" type="text" value="10.11.99.1" autocomplete="off"></div>
-      <div><label for="password">Tablet SSH password</label><input id="password" type="password" autocomplete="off" placeholder="Paste the password from tablet settings"></div>
+
+<svg class="grain" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+  <filter id="grainFilter"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter>
+  <rect width="100%" height="100%" filter="url(#grainFilter)"/>
+</svg>
+<header class="bar">
+  <span class="bar__mark">TRMNL</span>
+  <span class="bar__slash">/</span>
+  <span class="bar__meta">reMarkable Paper Pro</span>
+  <span class="bar__spacer"></span>
+  <span class="bar__meta"><i class="dot" id="linkDot" aria-hidden="true"></i><span id="linkState">Not connected</span></span>
+  <span class="bar__meta" style="text-transform:none">v{{VERSION}}</span>
+  <button type="button" class="chip" id="theme" aria-pressed="false">Ink mode</button>
+</header>
+
+<div class="wrap">
+<main class="sheet">
+  <div class="masthead">
+    <img src="/icon.png" alt="" width="60" height="60">
+    <div>
+      <h1>TRMNL for reMarkable</h1>
+      <p>Easy installer · version {{VERSION}}</p>
     </div>
-    <div class="actions"><button id="find">Find my tablet</button><button id="quit" class="secondary">Close installer</button></div>
-    <div id="deviceCard" class="card" hidden>
-      <div class="device"><b>Device</b><span id="model"></span><b>Firmware</b><span id="os"></span><b>Fingerprint</b><code id="fingerprint"></code><b>Status</b><span id="installed"></span></div>
-      <label class="check"><input id="trust" type="checkbox"><span>I recognize this as my tablet and approve this fingerprint. The installer will not continue if it changes.</span></label>
-      <div class="actions">
-        <button id="install" disabled>Install TRMNL</button>
-        <button id="reactivate" class="secondary" disabled>Reactivate after reboot</button>
-        <button id="recover" class="secondary" disabled>Restore stock interface</button>
-        <button id="uninstall" class="danger" disabled>Uninstall TRMNL</button>
-        <button id="purge" class="danger" disabled>Uninstall and erase data</button>
+  </div>
+
+  <ol class="progress" id="progress">
+    <li class="on" id="step1"><div class="track"></div><span class="num">01 — Connect</span></li>
+    <li id="step2"><div class="track"></div><span class="num">02 — Verify</span></li>
+    <li id="step3"><div class="track"></div><span class="num">03 — Install</span></li>
+  </ol>
+
+  <section class="pane" id="paneMain">
+    <p class="eyebrow" id="eyebrow">Step one — connect</p>
+    <h2>Connect your reMarkable Paper Pro</h2>
+    <p class="lede">Plug the tablet into this computer with USB, enable SSH/developer access in Settings, and enter the key shown by the tablet. Nothing changes on the tablet until you click Install.</p>
+
+    <div class="notice">
+      <b>Developer Mode is required</b>
+      <p>Enabling it factory-resets the Paper Pro, weakens secure-boot protections, and can affect support or warranty coverage. Back up and sync your files first. Restoring the normal interface below does not disable Developer Mode.</p>
+    </div>
+
+    <div class="fields">
+      <div class="field">
+        <label for="host">Tablet address</label>
+        <div class="input-shell"><input id="host" type="text" value="10.11.99.1" autocomplete="off" spellcheck="false"></div>
+        <p class="field-note">USB default — 10.11.99.1</p>
+      </div>
+      <div class="field">
+        <label for="password">reMarkable key <span aria-hidden="true">·</span> SSH password</label>
+        <div class="input-shell">
+          <input id="password" type="password" autocomplete="off" spellcheck="false" placeholder="Paste the tablet key" aria-describedby="keyNote">
+          <button type="button" class="reveal" id="revealKey" aria-pressed="false" aria-controls="keyReadout">Show key</button>
+        </div>
+        <p class="field-note" id="keyNote">Hidden · Settings → Software → Developer mode</p>
+        <div class="keyout" id="keyReadout" hidden>
+          <div class="cap">reMarkable key — visible</div>
+          <div id="keyBody"></div>
+        </div>
       </div>
     </div>
-    <div id="status" role="status" aria-live="polite"></div>
-    <small>Your password is handled in browser memory and by this local installer only. It is never saved, logged, or sent over the internet.</small>
+
+    <div class="actions">
+      <button type="button" class="btn btn--primary js-op" id="find">Find my tablet</button>
+      <button type="button" class="btn js-op" id="quit">Close installer</button>
+    </div>
+
+    <div class="card" id="deviceCard" hidden>
+      <div class="card__head"><span>Device record</span><span>Step 02 — Verify</span></div>
+      <div class="card__body">
+        <dl class="spec">
+          <dt>Device</dt><dd id="model"></dd>
+          <dt>Firmware</dt><dd id="os"></dd>
+          <dt>Host key</dt><dd><code id="fingerprint"></code></dd>
+          <dt>Status</dt><dd id="installed"></dd>
+        </dl>
+        <label class="check"><input id="trust" type="checkbox"><span>I recognize this as my tablet and approve this fingerprint. The installer will not continue if it changes.</span></label>
+        <div class="actions">
+          <button type="button" class="btn btn--primary js-op" id="install" disabled>Install TRMNL</button>
+          <button type="button" class="btn js-op" id="reactivate" disabled>Reactivate after reboot</button>
+          <button type="button" class="btn js-op" id="recover" disabled>Restore stock interface</button>
+        </div>
+        <div class="zone">
+          <div class="zone__head">Danger zone — irreversible</div>
+          <div class="zone__body">
+            <p>Removing TRMNL keeps your API key and settings unless you also erase its data. Erasing cannot be undone.</p>
+            <div class="actions">
+              <button type="button" class="btn btn--danger js-op" id="uninstall" disabled>Uninstall TRMNL</button>
+              <button type="button" class="btn btn--danger js-op" id="purge" disabled>Uninstall and erase data</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="status is-idle" id="status" role="status" aria-live="polite">
+      <span class="badge" id="statusBadge" aria-hidden="true">·</span>
+      <span class="msg" id="statusMsg">Ready. Enter the tablet address and key, then find your tablet.</span>
+    </div>
+
+    <div class="rule rule--hatch"></div>
+    <p class="lede" style="font-size:13.5px">Your key is handled in browser memory and by this local installer only. It is never saved, logged, or sent over the internet.</p>
   </section>
 </main>
+</div>
+
+<footer class="colophon">
+  <span>TRMNL for reMarkable — local installer, running on this computer only.</span>
+</footer>
+
+<noscript>
+  <div class="wrap"><main class="sheet"><section class="pane"><h2>JavaScript is required</h2><p class="lede">This installer needs JavaScript to talk to your tablet. Enable it and reload this page.</p></section></main></div>
+</noscript>
+
 <script>
 const csrf='{{CSRF}}';
 const $=id=>document.getElementById(id);
-let fingerprint='', compatible=false, installed=false, active=false;
+let fingerprint='', compatible=false, installed=false, active=false, keyVisible=false;
+
+/* --- theme ---------------------------------------------------------- */
+function readTheme(){
+  try { const saved=localStorage.getItem('trmnl-theme'); if(saved==='ink'||saved==='paper') return saved; } catch {}
+  return window.matchMedia('(prefers-color-scheme: dark)').matches?'ink':'paper';
+}
+function applyTheme(theme){
+  document.documentElement.setAttribute('data-theme',theme);
+  const on=theme==='ink';
+  $('theme').setAttribute('aria-pressed',String(on));
+  $('theme').textContent=on?'Paper mode':'Ink mode';
+  try { localStorage.setItem('trmnl-theme',theme); } catch {}
+}
+applyTheme(readTheme());
+$('theme').onclick=()=>applyTheme(document.documentElement.getAttribute('data-theme')==='ink'?'paper':'ink');
+
+/* --- reMarkable key visibility -------------------------------------- */
+function renderKey(){
+  const value=$('password').value;
+  const readout=$('keyReadout'), body=$('keyBody');
+  $('keyNote').textContent=keyVisible
+    ? (value?'Visible · '+value.length+' characters':'Visible · no key entered yet')
+    : 'Hidden · Settings → Software → Developer mode';
+  if(!keyVisible||!value){ readout.hidden=true; body.replaceChildren(); return; }
+  readout.hidden=false;
+  if(value.length<=32){
+    body.className='cells';
+    body.replaceChildren(...Array.from(value,ch=>{
+      const cell=document.createElement('span');
+      cell.textContent=ch===' '?'␣':ch;
+      return cell;
+    }));
+  } else {
+    body.className='plainkey';
+    body.textContent=value;
+  }
+}
+$('revealKey').onclick=()=>{
+  keyVisible=!keyVisible;
+  $('password').type=keyVisible?'text':'password';
+  $('revealKey').setAttribute('aria-pressed',String(keyVisible));
+  $('revealKey').textContent=keyVisible?'Hide key':'Show key';
+  renderKey();
+};
+$('password').addEventListener('input',renderKey);
+
+/* --- progress + link state ------------------------------------------ */
+const stepNames={1:'Step one — connect',2:'Step two — verify',3:'Step three — install'};
+function setStep(n){
+  [1,2,3].forEach(i=>{
+    const li=$('step'+i);
+    li.classList.toggle('on',i===n);
+    li.classList.toggle('done',i<n);
+  });
+  $('eyebrow').textContent=stepNames[n];
+}
+function setLink(text,live){
+  $('linkState').textContent=text;
+  $('linkDot').classList.toggle('live',!!live);
+}
+
+/* --- status --------------------------------------------------------- */
 function creds(){return {host:$('host').value.trim(),password:$('password').value,fingerprint};}
-function busy(message){$('status').className='';$('status').innerHTML='<span class="spinner"></span>'+message;document.querySelectorAll('button').forEach(b=>b.disabled=true);}
-function done(message,ok){$('status').textContent=message;$('status').className=ok?'ok':'error';$('find').disabled=false;$('quit').disabled=false;updateButtons();}
-function updateButtons(){const trusted=$('trust').checked;$('install').disabled=!(trusted&&compatible);$('reactivate').disabled=!(trusted&&installed&&!active);$('recover').disabled=!(trusted&&installed);$('uninstall').disabled=!(trusted&&installed);$('purge').disabled=!(trusted&&installed);}
-async function call(path, body){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-TRMNL-CSRF':csrf},body:JSON.stringify(body)});let data;try{data=await response.json();}catch{data={message:'The installer returned an unreadable response.'};}if(!response.ok)throw new Error(data.message||'Request failed');return data;}
-$('find').onclick=async()=>{if(!$('password').value){done('Enter the SSH password shown in the tablet settings.',false);return;}busy('Looking for your tablet…');try{const d=await call('/api/preflight',creds());fingerprint=d.fingerprint;compatible=d.compatible;installed=d.installed;active=d.active;$('model').textContent=d.model||'Unknown';$('os').textContent=d.os_version||'Unknown';$('fingerprint').textContent=fingerprint;$('installed').textContent=installed?(active?'TRMNL is active':'Installed; reactivate after reboot'):'Ready to install';$('deviceCard').hidden=false;$('trust').checked=false;done(d.message,d.compatible);}catch(e){done(e.message,false);}};
+function setStatus(state,badge,node){
+  $('status').className='status '+state;
+  $('statusBadge').textContent=badge;
+  $('statusMsg').replaceChildren(node);
+}
+function busy(message){
+  const wrap=document.createDocumentFragment();
+  wrap.append(message+' ');
+  const ticker=document.createElement('span');
+  ticker.className='ticker';
+  ticker.append(document.createElement('i'),document.createElement('i'),document.createElement('i'));
+  wrap.append(ticker);
+  setStatus('is-busy','~',wrap);
+  document.querySelectorAll('.js-op').forEach(b=>b.disabled=true);
+}
+function done(message,ok){
+  setStatus(ok?'is-ok':'is-error',ok?'✓':'✕',document.createTextNode(message));
+  $('find').disabled=false;
+  $('quit').disabled=false;
+  updateButtons();
+}
+function updateButtons(){
+  const trusted=$('trust').checked;
+  $('install').disabled=!(trusted&&compatible);
+  $('reactivate').disabled=!(trusted&&installed&&!active);
+  $('recover').disabled=!(trusted&&installed);
+  $('uninstall').disabled=!(trusted&&installed);
+  $('purge').disabled=!(trusted&&installed);
+}
+
+/* --- API ------------------------------------------------------------ */
+async function call(path, body){
+  const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-TRMNL-CSRF':csrf},body:JSON.stringify(body)});
+  let data;
+  try { data=await response.json(); } catch { data={message:'The installer returned an unreadable response.'}; }
+  if(!response.ok) throw new Error(data.message||'Request failed');
+  return data;
+}
+
+$('find').onclick=async()=>{
+  if(!$('password').value){ done('Enter the reMarkable key shown in the tablet settings.',false); return; }
+  busy('Looking for your tablet…');
+  try{
+    const d=await call('/api/preflight',creds());
+    fingerprint=d.fingerprint; compatible=d.compatible; installed=d.installed; active=d.active;
+    $('model').textContent=d.model||'Unknown';
+    $('os').textContent=d.os_version||'Unknown';
+    $('fingerprint').textContent=fingerprint;
+    $('installed').textContent=installed?(active?'TRMNL is active':'Installed; reactivate after reboot'):'Ready to install';
+    $('deviceCard').hidden=false;
+    $('trust').checked=false;
+    setStep(compatible?2:1);
+    setLink(d.model?'Linked · '+(d.model||'device'):'Linked',true);
+    done(d.message,d.compatible);
+  }catch(e){ setLink('Not connected',false); done(e.message,false); }
+};
 $('trust').onchange=updateButtons;
-$('install').onclick=async()=>{busy('Uploading and installing TRMNL. Keep the tablet connected…');try{const d=await call('/api/install',creds());installed=true;active=true;$('installed').textContent='TRMNL is active';done(d.message,true);}catch(e){done(e.message,false);}};
-$('reactivate').onclick=async()=>{busy('Reactivating AppLoad and TRMNL…');try{const d=await call('/api/reactivate',creds());active=true;$('installed').textContent='TRMNL is active';done(d.message,true);}catch(e){done(e.message,false);}};
-$('recover').onclick=async()=>{if(!confirm('Restore the normal reMarkable interface and temporarily disable TRMNL? Developer Mode and your settings will remain.'))return;busy('Restoring the normal interface…');try{const d=await call('/api/recover',creds());active=false;$('installed').textContent='Installed; currently disabled';done(d.message,true);}catch(e){done(e.message,false);}};
-$('uninstall').onclick=async()=>{if(!confirm('Remove TRMNL? Its API key, settings, and cached screens will be preserved.'))return;busy('Removing TRMNL…');try{const d=await call('/api/uninstall',creds());installed=false;active=false;$('installed').textContent='Not installed';done(d.message,true);}catch(e){done(e.message,false);}};
-$('purge').onclick=async()=>{if(!confirm('Permanently remove TRMNL and erase its API key, settings, cached screens, logs, history, and battery-test data? This cannot be undone.'))return;busy('Removing TRMNL and erasing its data…');try{const d=await call('/api/purge',creds());installed=false;active=false;$('installed').textContent='Not installed; TRMNL data erased';done(d.message,true);}catch(e){done(e.message,false);}};
-$('quit').onclick=async()=>{try{await call('/api/quit',{});}finally{document.body.innerHTML='<main><section><h2>Installer closed</h2><p>You can close this browser tab.</p></section></main>';}};
+
+$('install').onclick=async()=>{
+  setStep(3);
+  busy('Uploading and installing TRMNL. Keep the tablet connected…');
+  try{
+    const d=await call('/api/install',creds());
+    installed=true; active=true;
+    $('installed').textContent='TRMNL is active';
+    done(d.message,true);
+  }catch(e){ done(e.message,false); }
+};
+$('reactivate').onclick=async()=>{
+  busy('Reactivating AppLoad and TRMNL…');
+  try{
+    const d=await call('/api/reactivate',creds());
+    active=true;
+    $('installed').textContent='TRMNL is active';
+    done(d.message,true);
+  }catch(e){ done(e.message,false); }
+};
+$('recover').onclick=async()=>{
+  if(!confirm('Restore the normal reMarkable interface and temporarily disable TRMNL? Developer Mode and your settings will remain.'))return;
+  busy('Restoring the normal interface…');
+  try{
+    const d=await call('/api/recover',creds());
+    active=false;
+    $('installed').textContent='Installed; currently disabled';
+    done(d.message,true);
+  }catch(e){ done(e.message,false); }
+};
+$('uninstall').onclick=async()=>{
+  if(!confirm('Remove TRMNL? Its API key, settings, and cached screens will be preserved.'))return;
+  busy('Removing TRMNL…');
+  try{
+    const d=await call('/api/uninstall',creds());
+    installed=false; active=false;
+    $('installed').textContent='Not installed';
+    setStep(1);
+    done(d.message,true);
+  }catch(e){ done(e.message,false); }
+};
+$('purge').onclick=async()=>{
+  if(!confirm('Permanently remove TRMNL and erase its API key, settings, cached screens, logs, history, and battery-test data? This cannot be undone.'))return;
+  busy('Removing TRMNL and erasing its data…');
+  try{
+    const d=await call('/api/purge',creds());
+    installed=false; active=false;
+    $('installed').textContent='Not installed; TRMNL data erased';
+    setStep(1);
+    done(d.message,true);
+  }catch(e){ done(e.message,false); }
+};
+$('quit').onclick=async()=>{
+  try{ await call('/api/quit',{}); }
+  finally{
+    $('deviceCard').hidden=true;
+    setLink('Session closed',false);
+    setStep(1);
+    $('paneMain').replaceChildren();
+    const heading=document.createElement('h2');
+    heading.textContent='Installer closed';
+    const text=document.createElement('p');
+    text.className='lede';
+    text.textContent='The local installer has stopped. You can close this browser tab.';
+    $('paneMain').append(heading,text);
+  }
+};
 </script>
 </body>
 </html>

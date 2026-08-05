@@ -1,9 +1,9 @@
 # Acceptance verification checklist
 
 > This table records the earlier physical validation campaign (primarily v1.0
-> on Paper Pro firmware 3.27.3.0). See `V1.1_VALIDATION.md` for current host
-> evidence. Physical checks must be repeated with the exact v1.1 release ZIP
-> before publication; these rows must not be presented as v1.1 completion.
+> on Paper Pro firmware 3.27.3.0). See `V2.0_VALIDATION.md` for current release
+> evidence. Rows that were not repeated against the exact v2.0 archive remain
+> historical regression context rather than fresh v2.0 completion claims.
 
 `PASS` is backed by host tests, device state, framebuffer captures, sysfs
 read-back, service journals, or process measurements from the connected tablet.

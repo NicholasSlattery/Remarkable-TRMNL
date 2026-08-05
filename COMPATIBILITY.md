@@ -1,6 +1,6 @@
 # Compatibility policy
 
-| Component | v1.1 status |
+| Component | v2.0 status |
 |---|---|
 | reMarkable Paper Pro (`Ferrari`) | Supported |
 | reMarkable OS 3.26.x | Allowed by installer; exact-release physical check required |

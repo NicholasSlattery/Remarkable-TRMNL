@@ -25,7 +25,7 @@ var include = []string{
 	"BYOD_SETUP.md",
 	"PRIVACY.md",
 	"COMPATIBILITY.md",
-	"V1.1_VALIDATION.md",
+	"V2.0_VALIDATION.md",
 	"LICENSE",
 	"THIRD_PARTY_NOTICES.md",
 }

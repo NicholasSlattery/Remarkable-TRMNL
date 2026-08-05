@@ -14,9 +14,10 @@
       CycloneDX SBOM plus third-party notices.
 - [ ] Inspect `TRMNL Installer.exe` VersionInfo, icon/manifest, requested execution
       level, and Windows 10/11 launch behavior.
-- [ ] Authenticode-sign and timestamp the installer with an organization/maintainer
-      certificate; verify with `signtool verify /pa /all /v`. If unavailable,
-      treat Unknown Publisher/SmartScreen friction as a disclosed launch risk.
+- [ ] Authenticode-sign and timestamp the installer. A publicly trusted
+      organization/maintainer certificate is preferred; a self-signed community
+      build must bundle its public certificate and clearly disclose that Windows
+      will not trust it automatically.
 - [ ] Verify the final ZIP against `SHA256SUMS.txt` and, for a public repository,
       verify the GitHub artifact attestation.
 
@@ -37,9 +38,8 @@
 
 ## Publication and advertising
 
-- [ ] Replace `YOUR_AFFILIATE_ID` with an approved code plus clear commission
-      disclosure, or remove the `ref` parameter.
-- [ ] Capture the real v1.1 screenshots/video listed in `LAUNCH.md`; remove private
+- [x] Use a direct non-affiliate BYOD link with no tracking placeholder.
+- [ ] Capture the real v2.0 screenshots/video listed in `LAUNCH.md`; remove private
       dashboard, fingerprint, device ID, IP, password, and API key data.
 - [ ] Ensure README/release notes lead with Developer Mode factory-reset/security
       warnings and do not imply TRMNL/reMarkable endorsement.

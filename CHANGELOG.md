@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.0 - 2026-08-05
+
+- Redesign the Windows installer as a responsive e-ink-inspired three-step
+  experience with paper/ink themes, clearer device status, safer recovery
+  controls, accessible focus states, and improved small-screen behavior.
+- Detect charging during battery tests, invalidate misleading projections, and
+  require a 10% discharge window before estimating runtime.
+- Clarify the recommended Paper Pro power configuration: Auto-sleep and Light
+  sleep enabled, Auto power-off disabled, and longer refresh intervals for
+  substantially better dashboard runtime.
+- Add a research-backed media and launch kit with positioning, limitations,
+  outreach copy, asset guidance, and a reusable deep-research brief.
+- Add a documented self-signed Authenticode path for community builds while
+  retaining support for publicly trusted certificates and clearly disclosing
+  Windows trust warnings.
+
 ## 1.1.0 - 2026-08-04
 
 - Correct Device API metadata to send battery voltage, honor `Retry-After`,

@@ -21,7 +21,7 @@ No command line is required.
 Download the ZIP and `SHA256SUMS.txt` from the same GitHub Release. In PowerShell:
 
 ```powershell
-Get-FileHash .\TRMNL-for-reMarkable-1.1.0-Windows-x64.zip -Algorithm SHA256
+Get-FileHash .\TRMNL-for-reMarkable-2.0.0-Windows-x64.zip -Algorithm SHA256
 ```
 
 The value must exactly match `SHA256SUMS.txt`. Extract the entire ZIP; do not run

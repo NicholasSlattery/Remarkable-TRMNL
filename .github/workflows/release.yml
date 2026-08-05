@@ -60,20 +60,21 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           if ((Get-Content -Raw VERSION).Trim() -ne $version) { throw 'Tag and VERSION do not match' }
           ./scripts/build-release.ps1 -Version $version
-      - name: Authenticode-sign Windows installer when configured
+      - name: Authenticode-sign Windows installer
         shell: pwsh
         env:
           WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
           WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
         run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
           if (-not $env:WINDOWS_SIGNING_CERT_BASE64) {
-            Write-Warning 'WINDOWS_SIGNING_CERT_BASE64 is not configured; release will be unsigned.'
+            ./scripts/sign-self-signed-release.ps1 -Version $version
             exit 0
           }
           $certificate = Join-Path $env:RUNNER_TEMP 'windows-signing.pfx'
           try {
             [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT_BASE64))
-            ./scripts/sign-windows-release.ps1 -Version "${{ github.ref_name }}".TrimStart('v') -PfxPath $certificate -PfxPassword $env:WINDOWS_SIGNING_CERT_PASSWORD
+            ./scripts/sign-windows-release.ps1 -Version $version -PfxPath $certificate -PfxPassword $env:WINDOWS_SIGNING_CERT_PASSWORD
           } finally {
             Remove-Item -LiteralPath $certificate -Force -ErrorAction SilentlyContinue
           }

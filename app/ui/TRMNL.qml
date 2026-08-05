@@ -349,7 +349,7 @@ Rectangle {
                           ? "Scheduled wake is unavailable on this firmware. TRMNL will still refresh whenever the tablet is awake."
                           : (root.appState.wake_alarm_error
                              ? "Scheduled wake error: " + root.appState.wake_alarm_error
-                             : "Recommended: the e-ink image remains visible with almost no power while the tablet sleeps. TRMNL wakes at the next refresh interval, updates, and schedules the following wake-up. A manual shutdown or empty battery still requires a normal power-on.")
+                             : "Recommended: enable reMarkable Auto-sleep and Light sleep, but leave Auto power-off disabled. The dashboard remains visible while the tablet sleeps; TRMNL wakes at the next refresh interval, updates, and returns to sleep. A shutdown or empty battery still requires a normal power-on.")
                 }
                 Text {
                     visible: !!root.appState.next_refresh; width: parent.width; font.pixelSize: 19; color: "#444"
@@ -359,7 +359,7 @@ Rectangle {
                 Text { text: "Battery life test"; font.pixelSize: 28; font.bold: true }
                 Text {
                     width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 19; color: "#444"
-                    text: "For the best estimate, charge to 100%, unplug the charger, tap Start new test, and leave TRMNL running normally for at least 48 hours. Samples survive sleep and app restarts."
+                    text: "For the best estimate, charge to 100%, unplug the charger, tap Start new test, and leave TRMNL running until at least 10% is used. Plugging in during a test invalidates its projection. Samples survive sleep and app restarts."
                 }
                 Text {
                     width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 22; font.bold: true
@@ -377,15 +377,17 @@ Rectangle {
                 }
                 Text {
                     visible: !!root.batteryTest.started_at; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 22; font.bold: true
-                    text: root.batteryTest.estimate_available
+                    text: root.batteryTest.charging_observed
+                          ? "Charging was detected during this test. Unplug, reset the data, and start a new test."
+                          : root.batteryTest.estimate_available
                           ? "Projected total battery life  " + root.formatTestHours(root.batteryTest.projected_total_hours)
                             + "  ·  about " + root.formatTestHours(root.batteryTest.projected_remaining_hours) + " remaining"
-                          : "Projection begins after the battery drops at least 2%."
+                          : "Projection begins after the battery drops at least 10%."
                 }
                 Text {
                     visible: root.batteryTest.active && (root.batteryTest.battery_status === "Charging" || root.batteryTest.battery_status === "Full")
                     width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 19; color: "#7a1515"
-                    text: "Unplug the charger—the test is recording, but a charging period makes the projection inaccurate."
+                    text: "Unplug the charger. Charging invalidates this test; reset it after disconnecting power."
                 }
                 Canvas {
                     id: batteryChart

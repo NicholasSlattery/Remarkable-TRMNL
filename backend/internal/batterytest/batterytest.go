@@ -15,14 +15,15 @@ type Sample struct {
 }
 
 type State struct {
-	Active       bool       `json:"active"`
-	StartedAt    time.Time  `json:"started_at,omitempty"`
-	StoppedAt    *time.Time `json:"stopped_at,omitempty"`
-	StartPercent int        `json:"start_percent"`
-	Current      int        `json:"current_percent"`
-	Refreshes    int        `json:"refresh_count"`
-	Wakes        int        `json:"wake_count"`
-	Samples      []Sample   `json:"samples"`
+	Active           bool       `json:"active"`
+	StartedAt        time.Time  `json:"started_at,omitempty"`
+	StoppedAt        *time.Time `json:"stopped_at,omitempty"`
+	StartPercent     int        `json:"start_percent"`
+	Current          int        `json:"current_percent"`
+	Refreshes        int        `json:"refresh_count"`
+	Wakes            int        `json:"wake_count"`
+	ChargingObserved bool       `json:"charging_observed,omitempty"`
+	Samples          []Sample   `json:"samples"`
 }
 
 type Snapshot struct {
@@ -74,11 +75,27 @@ func (s *State) Stop(at time.Time, percent int) {
 	s.StoppedAt = &at
 }
 
+func (s *State) StopWithStatus(at time.Time, percent int, status string) {
+	if !s.Active {
+		return
+	}
+	s.AddSampleWithStatus(at, percent, true, status)
+	s.Active = false
+	s.StoppedAt = &at
+}
+
 func (s *State) Reset() { *s = State{} }
 
 func (s *State) AddSample(at time.Time, percent int, force bool) {
+	s.AddSampleWithStatus(at, percent, force, "")
+}
+
+func (s *State) AddSampleWithStatus(at time.Time, percent int, force bool, status string) {
 	if !s.Active || percent < 0 || percent > 100 {
 		return
+	}
+	if status == "Charging" || status == "Full" || (len(s.Samples) > 0 && percent > s.Current) {
+		s.ChargingObserved = true
 	}
 	s.Current = percent
 	if len(s.Samples) > 0 && !force {
@@ -103,7 +120,10 @@ func (s State) Clone() State {
 }
 
 func (s State) Snapshot(now time.Time, status string) Snapshot {
-	result := Snapshot{State: s.Clone(), MinimumEstimateNeeded: 2, BatteryStatus: status}
+	result := Snapshot{State: s.Clone(), MinimumEstimateNeeded: 10, BatteryStatus: status}
+	if status == "Charging" || status == "Full" {
+		result.ChargingObserved = true
+	}
 	if s.StartedAt.IsZero() {
 		return result
 	}
@@ -116,7 +136,7 @@ func (s State) Snapshot(now time.Time, status string) Snapshot {
 		result.ElapsedHours = 0
 	}
 	result.PercentUsed = s.StartPercent - s.Current
-	if result.PercentUsed >= result.MinimumEstimateNeeded && result.ElapsedHours > 0 {
+	if !result.ChargingObserved && result.PercentUsed >= result.MinimumEstimateNeeded && result.ElapsedHours > 0 {
 		result.EstimateAvailable = true
 		result.ProjectedTotalHours = result.ElapsedHours * 100 / float64(result.PercentUsed)
 		result.ProjectedRemainHours = result.ElapsedHours * float64(s.Current) / float64(result.PercentUsed)
