@@ -23,7 +23,6 @@ jobs:
       - uses: jurplel/install-qt-action@v4
         with:
           version: "6.8.2"
-          modules: qtdeclarative
       - name: Install validation tools
         run: |
           sudo apt-get update
@@ -59,7 +58,6 @@ jobs:
       - uses: jurplel/install-qt-action@v4
         with:
           version: "6.8.2"
-          modules: qtdeclarative
       - name: Build release assets
         shell: pwsh
         run: |
