@@ -36,7 +36,7 @@ jobs:
       - name: QML lint and resources
         run: |
           qmllint -W 0 -I tests/qml-stubs app/ui/TRMNL.qml
-          rcc --binary -o /tmp/resources.rcc app/application.qrc
+          "$QT_ROOT_DIR/libexec/rcc" --binary -o /tmp/resources.rcc app/application.qrc
           test -s /tmp/resources.rcc
       - name: ARM64 build
         env:
