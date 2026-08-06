@@ -37,7 +37,8 @@ func main() {
 		serveImage(w, n, landscape)
 	})
 	log.Printf("TRMNL mock listening at http://%s", *listen)
-	if err := http.ListenAndServe(*listen, mux); err != nil {
+	server := &http.Server{Addr: *listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -82,4 +83,4 @@ func serveImage(w http.ResponseWriter, n int64, landscape bool) {
 	_ = png.Encode(w, img)
 }
 
-func init() { log.SetOutput(os.Stderr); log.SetFlags(log.LstdFlags | log.LUTC); _ = time.Second }
+func init() { log.SetOutput(os.Stderr); log.SetFlags(log.LstdFlags | log.LUTC) }

@@ -41,9 +41,43 @@ if [ -e "$APP_DEST" ]; then
   stamp=$(date +%Y%m%d-%H%M%S)
   mv "$APP_DEST" "$BACKUP_DIR/trmnl-remarkable.$stamp"
 fi
+# Each backup is a full app bundle. Timestamped names sort chronologically, so
+# dropping the leading entries keeps the newest and stops repeated reinstalls
+# from filling /home/root.
+prune_oldest() {
+  keep=$1
+  shift
+  while [ "$#" -gt "$keep" ]; do
+    if [ -e "$1" ]; then rm -rf -- "$1"; fi
+    shift
+  done
+}
+prune_oldest 2 "$BACKUP_DIR"/trmnl-remarkable.*
 mv "$STAGED" "$APP_DEST"
 trap - EXIT HUP INT TERM
 
 echo "TRMNL AppLoad bundle installed: $APP_DEST"
-echo "AppLoad is starting. When the interface returns, open AppLoad and tap TRMNL."
-nohup sh -c 'sleep 2; /home/root/xovi/start' >/tmp/trmnl-xovi-start.log 2>&1 </dev/null &
+
+# setsid detaches the start script from this SSH session, which is torn down as
+# soon as the installer's command returns. Backgrounding alone raced with that
+# teardown and left XOVI un-injected while still reporting success, so wait here
+# until the injection is actually visible.
+rm -f /tmp/trmnl-xovi-start.log
+setsid sh -c 'exec /home/root/xovi/start' >/tmp/trmnl-xovi-start.log 2>&1 </dev/null &
+i=0
+while [ "$i" -lt 30 ]; do
+  sleep 1
+  i=$((i + 1))
+  pid=$(pidof xochitl 2>/dev/null | awk '{print $1}')
+  if [ -n "$pid" ] && [ -r "/proc/$pid/environ" ] &&
+     tr '\000' '\n' <"/proc/$pid/environ" | grep -q '^LD_PRELOAD=/home/root/xovi/xovi.so$'; then
+    echo "AppLoad is running. On the tablet, open AppLoad and tap TRMNL."
+    exit 0
+  fi
+done
+# The bundle itself is installed and verified; only the runtime start did not
+# take. Exiting non-zero here would make the caller roll back a good install, so
+# report it instead and let the user reactivate.
+echo "TRMNL_ACTIVATION_PENDING: the bundle is installed, but XOVI did not start within 30 seconds."
+tail -n 5 /tmp/trmnl-xovi-start.log 2>/dev/null || true
+exit 0

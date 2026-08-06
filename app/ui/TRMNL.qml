@@ -50,7 +50,16 @@ Rectangle {
             always_on: false,
             wake_for_refresh: wakeForRefresh.checked,
             logging_level: logLevel.currentText.toLowerCase(),
-            history_limit: 30
+            // Preserve settings that have no on-device control rather than
+            // resetting them every time this page is saved.
+            history_limit: appConfig.history_limit || 30,
+            dither_palette: appConfig.dither_palette,
+            quiet_hours_enabled: quietHours.checked,
+            quiet_hours_start: quietStart.text,
+            quiet_hours_end: quietEnd.text,
+            battery_saver_percent: batterySaver.checked ? 20 : 0,
+            dither: ditherMode.checked ? "auto" : "off",
+            update_check: updateCheck.checked
         }
     }
     function applyState(s) {
@@ -83,6 +92,12 @@ Rectangle {
         startCached.checked = c.start_with_cache_offline !== false
         wakeForRefresh.checked = c.wake_for_refresh !== false
         logLevel.currentIndex = c.logging_level === "debug" ? 1 : (c.logging_level === "warning" ? 2 : 0)
+        quietHours.checked = !!c.quiet_hours_enabled
+        quietStart.text = c.quiet_hours_start || "23:00"
+        quietEnd.text = c.quiet_hours_end || "07:00"
+        batterySaver.checked = (c.battery_saver_percent || 0) > 0
+        ditherMode.checked = c.dither === "auto"
+        updateCheck.checked = !!c.update_check
     }
     function requestNativeFullRefresh() {
         // AppLoad owns the framebuffer controller above this loaded component.
@@ -275,6 +290,15 @@ Rectangle {
                     Text { text: "Battery  " + (root.appState.battery_percent >= 0 ? root.appState.battery_percent + "%" : "unavailable"); font.pixelSize: 23; font.bold: true }
                     Text { text: "Last refresh  " + (root.appState.last_refresh ? new Date(root.appState.last_refresh).toLocaleString(Qt.locale(), Locale.ShortFormat) : "never"); font.pixelSize: 23; font.bold: true }
                 }
+                Text {
+                    visible: !!root.appState.battery_saving || !!root.appState.quiet_hours_active
+                    width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 21; color: "#7a4a12"
+                    text: root.appState.battery_saving && root.appState.quiet_hours_active
+                          ? "Battery saver and quiet hours are both active; scheduled refreshes resume in the morning."
+                          : (root.appState.battery_saving
+                             ? "Battery saver is active. Refreshes are less frequent until you charge the tablet."
+                             : "Quiet hours are active. Scheduled refreshes resume when the window ends.")
+                }
                 Text { text: "Brightness  " + Math.round(brightness.value) + "%"; font.pixelSize: 28; font.bold: true }
                 Slider {
                     id: brightness; width: parent.width; height: 78; from: 0; to: 100; stepSize: 1
@@ -340,9 +364,27 @@ Rectangle {
                     id: settingsUseSystemBrightness; text: "Use the reMarkable system front-light level"; font.pixelSize: 22
                     onClicked: { useSystemBrightness.checked = checked; endpoint.sendMessage(13, JSON.stringify({use_system_brightness:checked})) }
                 }
+                CheckBox { id: ditherMode; text: "Smooth gradients for the colour panel"; font.pixelSize: 22 }
+                Text {
+                    width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 19; color: "#444"
+                    text: "Dashboards are drawn for bright screens, so gradients arrive as visible bands. This spreads the error across neighbouring pixels instead. Text and flat colour are left alone."
+                }
                 CheckBox { id: restoreBrightness; text: "Restore previous brightness when exiting"; font.pixelSize: 22 }
                 CheckBox { id: startCached; text: "Start with cached screen when offline"; font.pixelSize: 22 }
                 CheckBox { id: wakeForRefresh; text: "Sleep between updates and wake for refresh"; font.pixelSize: 22 }
+                CheckBox { id: batterySaver; text: "Refresh less often below 20% battery"; font.pixelSize: 22 }
+                CheckBox { id: quietHours; text: "Pause scheduled refreshes overnight"; font.pixelSize: 22 }
+                Row {
+                    spacing: 18; visible: quietHours.checked
+                    Text { text: "From"; width: 80; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter }
+                    TextField { id: quietStart; width: 150; height: 64; placeholderText: "23:00"; font.pixelSize: 22 }
+                    Text { text: "until"; width: 90; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter }
+                    TextField { id: quietEnd; width: 150; height: 64; placeholderText: "07:00"; font.pixelSize: 22 }
+                }
+                Text {
+                    visible: quietHours.checked; width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 19; color: "#444"
+                    text: "24-hour times. The dashboard stays on screen; only scheduled wakeups pause. Refresh now still works."
+                }
                 Text {
                     width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 19; color: root.appState.wake_alarm_error ? "#7a1515" : "#444"
                     text: !root.appState.wake_for_refresh_available
@@ -424,6 +466,19 @@ Rectangle {
                     Button { text: "Start new test"; width: 240; height: 76; font.pixelSize: 21; enabled: !root.batteryTest.active && root.appState.battery_percent >= 0; onClicked: endpoint.sendMessage(14, "") }
                     Button { text: "Stop"; width: 160; height: 76; font.pixelSize: 21; enabled: !!root.batteryTest.active; onClicked: endpoint.sendMessage(15, "") }
                     Button { text: "Reset data"; width: 190; height: 76; font.pixelSize: 21; enabled: !!root.batteryTest.started_at; onClicked: endpoint.sendMessage(16, "") }
+                }
+                Rectangle { width: parent.width; height: 3; color: "#b8b4aa" }
+                CheckBox { id: updateCheck; text: "Check GitHub for a newer TRMNL version"; font.pixelSize: 22 }
+                Text {
+                    width: parent.width; wrapMode: Text.Wrap; font.pixelSize: 19
+                    color: root.appState.update && root.appState.update.update_available ? "#7a4a12" : "#444"
+                    text: !updateCheck.checked
+                          ? "Off by default. This is the only request TRMNL makes to a server other than your dashboard, so it stays off until you turn it on."
+                          : (root.appState.update
+                             ? (root.appState.update.update_available
+                                ? "Version " + root.appState.update.latest_version + " is available. Install it from a computer using the installer; the tablet does not update itself."
+                                : "You are on the newest published version.")
+                             : "Checked once a day.")
                 }
                 Row { spacing: 18; Text { text: "Logging"; width: 180; font.pixelSize: 22; anchors.verticalCenter: parent.verticalCenter } ComboBox { id: logLevel; width: 240; height: 64; model: ["Info", "Debug", "Warning"]; font.pixelSize: 22 } }
                 Text { id: testResult; width: parent.width; font.pixelSize: 21; wrapMode: Text.Wrap }

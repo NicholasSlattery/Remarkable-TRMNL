@@ -29,6 +29,19 @@ Production API and image traffic requires HTTPS. The only HTTP exception is a
 loopback development mock on the tablet. Credential-bearing redirects cannot
 change origin or protocol.
 
+## Update check
+
+**Check GitHub for a newer TRMNL version** is off by default. It is the only
+request the app makes to a host other than your configured dashboard server.
+When you turn it on, the tablet asks `api.github.com` once a day for the newest
+published release tag. That request carries no API key, device ID, or dashboard
+content, but it does reveal the tablet's IP address to GitHub, and GitHub's own
+terms apply to it. Turning the setting off stops the request immediately.
+
+The Wi-Fi signal strength the app reports to TRMNL alongside battery voltage is
+read locally from the wireless interface. It is sent only to your configured
+dashboard server, in the same request as the rest of the device metadata.
+
 ## Removal
 
 **Uninstall TRMNL** preserves configuration/cache for reinstall. **Uninstall and

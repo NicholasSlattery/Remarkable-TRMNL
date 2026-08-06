@@ -39,8 +39,8 @@
 ## Publication and advertising
 
 - [x] Use a direct non-affiliate BYOD link with no tracking placeholder.
-- [ ] Capture the real v2.0 screenshots/video listed in `LAUNCH.md`; remove private
-      dashboard, fingerprint, device ID, IP, password, and API key data.
+- [ ] Capture screenshots from the release build; remove private dashboard,
+      host key, device ID, IP, password, and API key data.
 - [ ] Ensure README/release notes lead with Developer Mode factory-reset/security
       warnings and do not imply TRMNL/reMarkable endorsement.
 - [ ] Create an annotated `vX.Y.Z` tag from the validated commit and push it.

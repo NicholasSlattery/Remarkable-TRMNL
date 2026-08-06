@@ -29,7 +29,22 @@ fi
 systemctl daemon-reload
 systemctl restart xochitl
 systemctl is-active --quiet xochitl
-xochitl_pid=$(pidof xochitl | awk '{print $1}')
+# Xochitl needs a moment to appear in /proc after the restart. Without this
+# wait an empty PID makes the injection probe silently report success.
+xochitl_pid=""
+attempt=0
+while [ "$attempt" -lt 20 ]; do
+  xochitl_pid=$(pidof xochitl 2>/dev/null | awk '{print $1}')
+  if [ -n "$xochitl_pid" ] && [ -r "/proc/$xochitl_pid/environ" ]; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 1
+done
+if [ -z "$xochitl_pid" ] || [ ! -r "/proc/$xochitl_pid/environ" ]; then
+  echo "Recovery verification failed: Xochitl did not report a readable process after restart" >&2
+  exit 41
+fi
 if tr '\000' '\n' <"/proc/$xochitl_pid/environ" | grep -q '^LD_PRELOAD=/home/root/xovi/xovi.so$'; then
   echo "Recovery verification failed: XOVI is still injected" >&2
   exit 40

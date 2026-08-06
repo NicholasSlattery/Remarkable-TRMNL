@@ -13,10 +13,12 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,9 +31,11 @@ import (
 	"trmnl-remarkable/backend/internal/brightness"
 	"trmnl-remarkable/backend/internal/cache"
 	"trmnl-remarkable/backend/internal/config"
+	"trmnl-remarkable/backend/internal/dither"
 	"trmnl-remarkable/backend/internal/power"
 	"trmnl-remarkable/backend/internal/protocol"
 	"trmnl-remarkable/backend/internal/trmnl"
+	"trmnl-remarkable/backend/internal/update"
 )
 
 var version = "dev"
@@ -93,6 +97,8 @@ type app struct {
 	nextRefresh                      time.Time
 	wakeAlarmError                   string
 	batteryTest                      batterytest.State
+	updates                          *update.Checker
+	updateResult                     update.Result
 }
 
 func main() {
@@ -145,6 +151,7 @@ func main() {
 	a.client.Version = version
 	a.client.Battery = readBatteryVoltage
 	a.client.RSSI = readRSSI
+	a.updates = update.New()
 	a.loadHistory()
 	if saved, e := batterytest.Load(a.batteryPath); e == nil {
 		a.batteryTest = saved
@@ -181,6 +188,7 @@ func main() {
 	}()
 	go a.scheduler()
 	go a.batterySampler()
+	go a.updateWatcher()
 	if e, ok := a.cache.Latest(); ok && cfg.StartWithCacheOffline {
 		a.sendImage(e, true)
 	}
@@ -242,6 +250,9 @@ func (a *app) handle(m protocol.Message) {
 		}
 		a.sendStatus("Settings saved")
 		a.sendState()
+		if next.UpdateCheck && !old.UpdateCheck {
+			go a.checkForUpdate()
+		}
 	case msgTestConnection:
 		go a.testConnection(m.Contents)
 	case msgRefreshCurrent:
@@ -335,50 +346,64 @@ func (a *app) scheduler() {
 	}
 	defer timer.Stop()
 	backoff := time.Minute
+	run := func(t trigger) {
+		ok, refresh := a.fetch(t)
+		if ok {
+			backoff = time.Minute
+		} else {
+			if refresh <= 0 {
+				refresh = backoff
+			}
+			if backoff < 30*time.Minute {
+				backoff *= 2
+			}
+		}
+		a.scheduleNext(timer, a.refreshInterval(refresh))
+	}
 	for {
 		select {
 		case t := <-a.triggers:
-			ok, refresh := a.fetch(t)
-			if ok {
-				backoff = time.Minute
-			} else {
-				if refresh <= 0 {
-					refresh = backoff
-				}
-				if backoff < 30*time.Minute {
-					backoff *= 2
-				}
-			}
-			a.mu.RLock()
-			min := time.Duration(a.cfg.MinimumRefreshSeconds) * time.Second
-			a.mu.RUnlock()
-			if refresh < min {
-				refresh = min
-			}
-			a.scheduleNext(timer, refresh)
+			run(t)
 		case <-timer.C:
-			ok, refresh := a.fetch(trigger{advance: true, reason: "scheduled"})
-			if ok {
-				backoff = time.Minute
-			} else {
-				if refresh <= 0 {
-					refresh = backoff
-				}
-				if backoff < 30*time.Minute {
-					backoff *= 2
-				}
-			}
-			a.mu.RLock()
-			min := time.Duration(a.cfg.MinimumRefreshSeconds) * time.Second
-			a.mu.RUnlock()
-			if refresh < min {
-				refresh = min
-			}
-			a.scheduleNext(timer, refresh)
+			run(trigger{advance: true, reason: "scheduled"})
 		case <-a.ctx.Done():
 			return
 		}
 	}
+}
+
+// refreshInterval applies the configured floor and, when the battery is low and
+// the tablet is not charging, stretches the interval so a dashboard left
+// unattended lasts materially longer.
+func (a *app) refreshInterval(refresh time.Duration) time.Duration {
+	a.mu.RLock()
+	cfg := a.cfg
+	a.mu.RUnlock()
+	if min := time.Duration(cfg.MinimumRefreshSeconds) * time.Second; refresh < min {
+		refresh = min
+	}
+	saving, _ := a.batterySaving(cfg)
+	if saving {
+		refresh *= config.BatterySaverMultiplier
+		if refresh > config.BatterySaverMaxRefresh {
+			refresh = config.BatterySaverMaxRefresh
+		}
+	}
+	return refresh
+}
+
+// batterySaving reports whether the low-battery interval is in force, plus the
+// percentage that decided it.
+func (a *app) batterySaving(cfg config.Config) (bool, int) {
+	percent := readBatteryPercent()
+	if cfg.BatterySaverPercent <= 0 || percent < 0 || percent > cfg.BatterySaverPercent {
+		return false, percent
+	}
+	switch readBatteryStatus() {
+	case "Charging", "Full":
+		return false, percent
+	}
+	return true, percent
 }
 
 func (a *app) fetch(t trigger) (bool, time.Duration) {
@@ -512,7 +537,15 @@ func (a *app) sendState() {
 	nextRefresh := a.nextRefresh
 	wakeAlarmError := a.wakeAlarmError
 	a.mu.RUnlock()
-	state := map[string]any{"config": cfg, "api_key_configured": hasKey, "version": version, "battery_percent": readBatteryPercent(), "wake_for_refresh_available": a.wake != nil}
+	a.mu.RLock()
+	full := a.cfg
+	latest := a.updateResult
+	a.mu.RUnlock()
+	saving, percent := a.batterySaving(full)
+	state := map[string]any{"config": cfg, "api_key_configured": hasKey, "version": version, "battery_percent": percent, "wake_for_refresh_available": a.wake != nil, "battery_saving": saving, "quiet_hours_active": full.InQuietHours(time.Now())}
+	if latest.Latest != "" {
+		state["update"] = latest
+	}
 	if detectedID := readDeviceID(); detectedID != "" {
 		state["detected_device_id"] = detectedID
 	}
@@ -524,7 +557,7 @@ func (a *app) sendState() {
 	}
 	if a.light != nil {
 		if _, err := a.light.Read(); err == nil {
-			state["brightness"] = a.light
+			state["brightness"] = a.light.Snapshot()
 			state["brightness_percent"] = a.light.Percent()
 		}
 	}
@@ -537,13 +570,13 @@ func (a *app) sendState() {
 func (a *app) sendImage(e cache.Entry, cached bool) {
 	path := e.Path
 	a.mu.RLock()
-	invert := a.cfg.Invert
+	cfg := a.cfg
 	a.mu.RUnlock()
-	if invert {
-		if rendered, err := a.invertedView(e.Path); err == nil {
+	if cfg.Invert || cfg.Dither == "auto" {
+		if rendered, err := a.renderedView(e.Path, cfg); err == nil {
 			path = rendered
 		} else {
-			log.Printf("invert failed: %v", err)
+			log.Printf("render failed, showing the original screen: %v", err)
 		}
 	}
 	a.send(msgImage, mustJSON(map[string]any{"path": "file://" + path, "cached": cached, "saved_at": e.SavedAt}))
@@ -602,6 +635,43 @@ func (a *app) sendHistory() {
 	h := append([]historyEntry{}, a.history...)
 	a.mu.RUnlock()
 	a.send(msgHistory, mustJSON(h))
+}
+
+// updateWatcher polls the release feed only while the owner has opted in. The
+// checker caches for a day, so the six-hour tick simply notices a setting change
+// without waiting for a restart.
+func (a *app) updateWatcher() {
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	a.checkForUpdate()
+	for {
+		select {
+		case <-ticker.C:
+			a.checkForUpdate()
+		case <-a.ctx.Done():
+			return
+		}
+	}
+}
+
+func (a *app) checkForUpdate() {
+	a.mu.RLock()
+	enabled := a.cfg.UpdateCheck
+	a.mu.RUnlock()
+	if !enabled || a.updates == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 30*time.Second)
+	defer cancel()
+	result, err := a.updates.Check(ctx, version, time.Now().UTC())
+	if err != nil {
+		log.Printf("update check failed: %v", safeError(err))
+		return
+	}
+	a.mu.Lock()
+	a.updateResult = result
+	a.mu.Unlock()
+	a.sendState()
 }
 
 func (a *app) batterySampler() {
@@ -765,37 +835,55 @@ func (a *app) diagnostics() string {
 	m["battery_test"] = a.batteryTest.Snapshot(time.Now().UTC(), readBatteryStatus())
 	a.batteryMu.Unlock()
 	if a.light != nil {
-		m["brightness"] = a.light
+		m["brightness"] = a.light.Snapshot()
 	}
 	return mustJSON(m)
 }
 
-func (a *app) invertedView(source string) (string, error) {
+// renderedView applies the display transforms the panel benefits from. Both are
+// optional; when neither changes the image the caller shows the cached file.
+func (a *app) renderedView(source string, cfg config.Config) (string, error) {
 	f, err := os.Open(source)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	src, _, err := image.Decode(f)
+	decoded, _, err := image.Decode(f)
 	if err != nil {
 		return "", err
 	}
-	b := src.Bounds()
-	dst := image.NewNRGBA(b)
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			c := color.NRGBAModel.Convert(src.At(x, y)).(color.NRGBA)
-			dst.SetNRGBA(x, y, color.NRGBA{R: 255 - c.R, G: 255 - c.G, B: 255 - c.B, A: c.A})
+
+	var src image.Image = decoded
+	suffix := ""
+	if cfg.Dither == "auto" {
+		palette, paletteErr := dither.NewPalette(cfg.Palette(), config.ParseHexColor)
+		if paletteErr != nil {
+			log.Printf("dither palette unusable: %v", paletteErr)
+		} else if dither.Needed(src, palette) {
+			src = dither.Apply(src, palette)
+			suffix += "-d"
 		}
 	}
-	final := filepath.Join(a.dataDir, "inverted.png")
+	if cfg.Invert {
+		src = invertImage(src)
+		suffix += "-i"
+	}
+	if suffix == "" {
+		return source, nil
+	}
+
+	// Derive the render name from its source and the transforms applied. QML's
+	// Image ignores a source assignment that does not change the URL, so a
+	// single fixed filename would freeze the dashboard on the first render and
+	// make Previous a no-op.
+	final := filepath.Join(a.dataDir, renderName(source, suffix))
 	tmp, err := os.CreateTemp(a.dataDir, ".invert-*.tmp")
 	if err != nil {
 		return "", err
 	}
 	name := tmp.Name()
 	defer os.Remove(name)
-	if err := png.Encode(tmp, dst); err != nil {
+	if err := png.Encode(tmp, src); err != nil {
 		tmp.Close()
 		return "", err
 	}
@@ -809,7 +897,52 @@ func (a *app) invertedView(source string) (string, error) {
 	if err := os.Rename(name, final); err != nil {
 		return "", err
 	}
+	pruneInverted(a.dataDir, 3)
 	return final, nil
+}
+
+func invertImage(src image.Image) image.Image {
+	b := src.Bounds()
+	dst := image.NewNRGBA(b)
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			c := color.NRGBAModel.Convert(src.At(x, y)).(color.NRGBA)
+			dst.SetNRGBA(x, y, color.NRGBA{R: 255 - c.R, G: 255 - c.G, B: 255 - c.B, A: c.A})
+		}
+	}
+	return dst
+}
+
+func renderName(source, suffix string) string {
+	base := filepath.Base(source)
+	return "inverted-" + strings.TrimSuffix(base, filepath.Ext(base)) + suffix + ".png"
+}
+
+// pruneInverted keeps the newest renders so that toggling between the current
+// and previous screen does not re-encode every time, and drops the rest.
+func pruneInverted(dir string, keep int) {
+	// "inverted.png" is the pre-2.1 fixed name and is always removed.
+	_ = os.Remove(filepath.Join(dir, "inverted.png"))
+	matches, _ := filepath.Glob(filepath.Join(dir, "inverted-*.png"))
+	if len(matches) <= keep {
+		return
+	}
+	type rendered struct {
+		path string
+		at   time.Time
+	}
+	var all []rendered
+	for _, p := range matches {
+		st, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		all = append(all, rendered{path: p, at: st.ModTime()})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].at.After(all[j].at) })
+	for _, old := range all[min(keep, len(all)):] {
+		_ = os.Remove(old.path)
+	}
 }
 
 func validateImagePayload(payload []byte) error {
@@ -826,55 +959,58 @@ func validateImagePayload(payload []byte) error {
 	return nil
 }
 
-func readBatteryPercent() int {
-	return readBatteryPercentAt("/sys/class/power_supply")
-}
+const powerSupplyRoot = "/sys/class/power_supply"
+
+func readBatteryPercent() int { return readBatteryPercentAt(powerSupplyRoot) }
 func readBatteryStatus() string {
-	paths, _ := filepath.Glob("/sys/class/power_supply/*/capacity")
+	dir, _ := systemBattery(powerSupplyRoot)
+	if dir == "" {
+		return ""
+	}
+	return readTrimmed(filepath.Join(dir, "status"))
+}
+func readBatteryVoltage() string { return readBatteryVoltageAt(powerSupplyRoot) }
+
+// systemBattery picks the supply that reports the tablet's own charge. The
+// Paper Pro also exposes marker accessories as Wireless supplies and a charger
+// IC as a second "Battery" that has no capacity file, so percentage, status and
+// voltage must all come from the one supply that reports a usable capacity.
+func systemBattery(root string) (string, int) {
+	paths, _ := filepath.Glob(filepath.Join(root, "*", "capacity"))
+	sort.Strings(paths)
+	var fallbackDir string
+	fallbackPercent := -1
 	for _, p := range paths {
 		dir := filepath.Dir(p)
+		v, err := strconv.Atoi(readTrimmed(p))
+		if err != nil || v < 0 || v > 100 {
+			continue
+		}
 		if readTrimmed(filepath.Join(dir, "type")) == "Battery" {
-			return readTrimmed(filepath.Join(dir, "status"))
+			return dir, v
+		}
+		if fallbackDir == "" {
+			fallbackDir, fallbackPercent = dir, v
 		}
 	}
-	return ""
+	return fallbackDir, fallbackPercent
 }
 
 func readBatteryPercentAt(root string) int {
-	paths, _ := filepath.Glob(filepath.Join(root, "*", "capacity"))
-	// Paper Pro exposes marker accessories as Wireless power supplies whose
-	// capacity is commonly zero. Prefer the actual system Battery device.
-	for _, p := range paths {
-		if readTrimmed(filepath.Join(filepath.Dir(p), "type")) != "Battery" {
-			continue
-		}
-		if v, e := strconv.Atoi(readTrimmed(p)); e == nil && v >= 0 && v <= 100 {
-			return v
-		}
-	}
-	for _, p := range paths {
-		if v, e := strconv.Atoi(readTrimmed(p)); e == nil && v >= 0 && v <= 100 {
-			return v
-		}
-	}
-	return -1
-}
-func readBatteryVoltage() string {
-	return readBatteryVoltageAt("/sys/class/power_supply")
+	_, percent := systemBattery(root)
+	return percent
 }
 
 func readBatteryVoltageAt(root string) string {
-	paths, _ := filepath.Glob(filepath.Join(root, "*", "voltage_now"))
-	for _, p := range paths {
-		if readTrimmed(filepath.Join(filepath.Dir(p), "type")) != "Battery" {
-			continue
-		}
-		microvolts, err := strconv.ParseInt(readTrimmed(p), 10, 64)
-		if err == nil && microvolts > 0 {
-			return strconv.FormatFloat(float64(microvolts)/1_000_000, 'f', 3, 64)
-		}
+	dir, _ := systemBattery(root)
+	if dir == "" {
+		return ""
 	}
-	return ""
+	microvolts, err := strconv.ParseInt(readTrimmed(filepath.Join(dir, "voltage_now")), 10, 64)
+	if err != nil || microvolts <= 0 {
+		return ""
+	}
+	return strconv.FormatFloat(float64(microvolts)/1_000_000, 'f', 3, 64)
 }
 func readDeviceID() string {
 	return readDeviceIDAt("/sys/class/net")
@@ -898,7 +1034,40 @@ func readDeviceIDAt(root string) string {
 	}
 	return ""
 }
-func readRSSI() string { return "" }
+
+var (
+	rssiMu        sync.Mutex
+	rssiValue     string
+	rssiFetchedAt time.Time
+	rssiPattern   = regexp.MustCompile(`signal:\s*(-?\d+)\s*dBm`)
+)
+
+// readRSSI reports the Wi-Fi signal strength TRMNL records alongside battery
+// voltage. This firmware leaves /proc/net/wireless and the sysfs wireless
+// directory empty, so the value comes from iw. It is cached because a refresh
+// interval is minutes long but state updates are frequent.
+func readRSSI() string {
+	rssiMu.Lock()
+	defer rssiMu.Unlock()
+	if time.Since(rssiFetchedAt) < time.Minute {
+		return rssiValue
+	}
+	rssiFetchedAt = time.Now()
+	rssiValue = ""
+	if readTrimmed("/sys/class/net/wlan0/operstate") != "up" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "/usr/sbin/iw", "dev", "wlan0", "link").Output()
+	if err != nil {
+		return ""
+	}
+	if m := rssiPattern.FindSubmatch(out); len(m) == 2 {
+		rssiValue = string(m[1])
+	}
+	return rssiValue
+}
 func readTrimmed(p string) string {
 	b, e := os.ReadFile(p)
 	if e != nil {
@@ -906,6 +1075,13 @@ func readTrimmed(p string) string {
 	}
 	return strings.TrimSpace(string(b))
 }
+
+// urlPattern matches the absolute URLs that net/http embeds in *url.Error.
+var urlPattern = regexp.MustCompile(`https?://[^\s"']+`)
+
+// safeError prepares an error for the tablet screen, the history list and the
+// log. TRMNL image URLs carry signed query parameters, so only the origin is
+// kept; anything naming the access token is dropped entirely.
 func safeError(err error) string {
 	if err == nil {
 		return ""
@@ -914,7 +1090,16 @@ func safeError(err error) string {
 	if i := strings.Index(strings.ToLower(s), "access-token"); i >= 0 {
 		s = s[:i] + "credentials redacted"
 	}
-	return s
+	return urlPattern.ReplaceAllStringFunc(s, func(match string) string {
+		u, parseErr := url.Parse(match)
+		if parseErr != nil || u.Host == "" {
+			return "[redacted URL]"
+		}
+		if u.RawQuery == "" && u.User == nil && u.Fragment == "" {
+			return match
+		}
+		return u.Scheme + "://" + u.Host + u.EscapedPath() + " [query redacted]"
+	})
 }
 func retryDelay(err error) time.Duration {
 	var httpErr *trmnl.HTTPError
@@ -944,8 +1129,18 @@ func resetTimer(t *time.Timer, d time.Duration) {
 }
 
 func (a *app) scheduleNext(timer *time.Timer, d time.Duration) {
-	resetTimer(timer, d)
+	a.mu.RLock()
+	cfg := a.cfg
+	a.mu.RUnlock()
+
 	next := time.Now().Add(d).Truncate(time.Second)
+	// A refresh that would land inside the quiet window is deferred until it
+	// closes, so the tablet stays asleep overnight instead of waking hourly.
+	if resumed := cfg.NextActiveTime(next); resumed.After(next) {
+		next = resumed.Truncate(time.Second)
+		d = time.Until(next)
+	}
+	resetTimer(timer, d)
 	a.mu.Lock()
 	a.nextRefresh = next
 	wakeEnabled := a.cfg.WakeForRefresh
@@ -998,7 +1193,9 @@ func rotateLog(path string, max int64) {
 }
 
 func cleanupTemps(dirs ...string) {
-	patterns := []string{".download-*.tmp", ".index-*.tmp", ".config-*.tmp", ".invert-*.tmp", ".tmp-*"}
+	// Inverted renders are regenerated on demand, so nothing carries over a
+	// restart; dropping them reclaims space when inversion is turned off.
+	patterns := []string{".download-*.tmp", ".index-*.tmp", ".config-*.tmp", ".invert-*.tmp", ".tmp-*", "inverted.png", "inverted-*.png"}
 	for _, dir := range dirs {
 		for _, pattern := range patterns {
 			matches, _ := filepath.Glob(filepath.Join(dir, pattern))

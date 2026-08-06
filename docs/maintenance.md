@@ -13,4 +13,4 @@ may be closed after a documented request for reproduction evidence.
 A release requires two independent evidence layers: automated host/CI validation
 and installation of the exact final archive on supported physical hardware.
 Compatibility claims must name model, firmware build, app version, and archive
-SHA-256. See `RELEASE_CHECKLIST.md`.
+SHA-256. See [releasing](releasing.md).

@@ -45,7 +45,9 @@ expect_hash() {
 
 model=$(tr -d '\000' </proc/device-tree/model 2>/dev/null || true)
 arch=$(uname -m)
-os_version=$(sed -n 's/^IMG_VERSION="\([^"]*\)"/\1/p' /etc/os-release)
+# Match install.sh and the installer's own probe: IMG_VERSION may or may not be
+# quoted, and an unquoted value must not read as an unsupported firmware.
+os_version=$(sed -n 's/^IMG_VERSION="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' /etc/os-release | head -n1)
 [ "$model" = "reMarkable Ferrari" ] || { echo "Not a Paper Pro: $model" >&2; exit 31; }
 [ "$arch" = "aarch64" ] || { echo "Unsupported architecture: $arch" >&2; exit 32; }
 case "$os_version" in 3.26.*|3.27.*) ;; *) echo "AppLoad 0.5.3 is incompatible with OS $os_version (requires >=3.26,<3.28)" >&2; exit 33;; esac
@@ -115,6 +117,19 @@ sh "$PROJECT/install.sh"
 
 completed=1
 trap - EXIT HUP INT TERM
+
+# The rollback copy is no longer needed. Timestamped names sort chronologically,
+# so dropping the leading entries keeps the newest and stops repeated reinstalls
+# from filling /home/root.
+prune_oldest() {
+    keep=$1
+    shift
+    while [ "$#" -gt "$keep" ]; do
+        if [ -e "$1" ]; then rm -rf -- "$1"; fi
+        shift
+    done
+}
+prune_oldest 1 "$STATE/install-backup"/source.*
 
 echo "RUNTIME_INSTALL_OK"
 echo "model=$model os=$os_version arch=$arch"
