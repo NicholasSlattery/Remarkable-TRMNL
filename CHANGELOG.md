@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.1.1 - 2026-08-05
+
+## Repository and packaging improvements
+
+This maintenance release reorganizes the repository while preserving full
+compatibility with existing installations.
+
+### Changed
+
+- Moved on-device scripts and configuration into `device/`
+- Moved contributing, security, support, and conduct documents into `.github/`
+- Updated CI, documentation links, and repository architecture documentation
+- Added explicit archive path rewriting so device installation paths remain unchanged
+
+### Compatibility
+
+The packaged device layout is identical to v2.1.0. Existing absolute paths for
+installation, recovery, diagnostics, testing, and uninstall remain unchanged.
+
+### Validation
+
+- Passed Go formatting, tests, and native/ARM64 vet checks
+- Passed ShellCheck and QML linting
+- Completed the full release build
+- Confirmed the archive contains the same 20 paths as v2.1.0
+- Tested installation, XOVI activation, stock-interface recovery, and uninstall
+  on a reMarkable Paper Pro running firmware 3.27.3.0
+
 ## 2.1.0 - 2026-08-05
 
 Validated on a reMarkable Paper Pro running 3.27.3.0; see
