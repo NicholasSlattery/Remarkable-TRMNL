@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,12 +34,30 @@ type server struct {
 	csrf        string
 	payloadDir  string
 	operationMu sync.Mutex
+	known       *knownHosts
 }
 
 type credentials struct {
 	Host        string `json:"host"`
 	Password    string `json:"password"`
 	Fingerprint string `json:"fingerprint"`
+	// AcceptNewKey lets the user replace a remembered key after confirming the
+	// change out of band. Developer Mode factory-resets the tablet and issues a
+	// new host key, so without this a legitimate reset would lock them out.
+	AcceptNewKey bool `json:"accept_new_key"`
+}
+
+// expectedFingerprint prefers the key remembered from a previous successful
+// install. The key echoed back by the page is only trusted when the user has
+// explicitly accepted a change.
+func (s *server) expectedFingerprint(c credentials) string {
+	if c.AcceptNewKey {
+		return c.Fingerprint
+	}
+	if stored, ok := s.known.Lookup(c.Host); ok {
+		return stored
+	}
+	return c.Fingerprint
 }
 
 type response struct {
@@ -49,6 +69,10 @@ type response struct {
 	Compatible  bool   `json:"compatible,omitempty"`
 	Installed   bool   `json:"installed,omitempty"`
 	Active      bool   `json:"active,omitempty"`
+	// KnownHost is true when this tablet's key matches the one recorded on a
+	// previous run. Changed reports a key that no longer matches.
+	KnownHost bool `json:"known_host,omitempty"`
+	Changed   bool `json:"fingerprint_changed,omitempty"`
 }
 
 type payloadManifest struct {
@@ -62,10 +86,21 @@ func main() {
 		fatalDialog(err.Error())
 		return
 	}
-	s := &server{csrf: randomToken(), payloadDir: filepath.Join(filepath.Dir(exe), "payload")}
+	s := &server{
+		csrf:       randomToken(),
+		payloadDir: filepath.Join(filepath.Dir(exe), "payload"),
+		known:      loadKnownHosts(defaultKnownHostsPath()),
+	}
 	listenAddress := os.Getenv("TRMNL_INSTALLER_ADDR")
 	if listenAddress == "" {
 		listenAddress = "127.0.0.1:0"
+	}
+	// The installer executes commands on the tablet over SSH. Binding anywhere
+	// but loopback would expose that to the network, so an override that is not
+	// loopback is refused rather than honored.
+	if !isLoopbackHost(listenAddress) {
+		fatalDialog("TRMNL_INSTALLER_ADDR must be a loopback address; refusing to listen on " + listenAddress)
+		return
 	}
 	ln, err := net.Listen("tcp", listenAddress)
 	if err != nil {
@@ -82,7 +117,7 @@ func main() {
 	mux.HandleFunc("/api/uninstall", s.uninstall)
 	mux.HandleFunc("/api/purge", s.purge)
 	mux.HandleFunc("/api/quit", s.quit)
-	httpServer := &http.Server{Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second}
+	httpServer := &http.Server{Handler: loopbackOnly(securityHeaders(mux)), ReadHeaderTimeout: 5 * time.Second}
 	url := "http://" + ln.Addr().String() + "/"
 	if os.Getenv("TRMNL_INSTALLER_NO_BROWSER") != "1" {
 		go func() {
@@ -113,10 +148,10 @@ func (s *server) index(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, html)
 }
 
-func (s *server) icon(w http.ResponseWriter, _ *http.Request) {
+func (s *server) icon(w http.ResponseWriter, r *http.Request) {
 	b, err := webFiles.ReadFile("web/icon.svg")
 	if err != nil {
-		http.NotFound(w, nil)
+		http.NotFound(w, r)
 		return
 	}
 	w.Header().Set("Content-Type", "image/svg+xml")
@@ -128,6 +163,8 @@ func (s *server) preflight(w http.ResponseWriter, r *http.Request) {
 	if !s.decode(w, r, &c) {
 		return
 	}
+	// Preflight deliberately accepts whatever key the tablet offers so the user
+	// can see it. It is compared against the stored key immediately afterwards.
 	client, fingerprint, err := connect(c, "")
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, response{Message: friendlySSHError(err)})
@@ -139,13 +176,24 @@ func (s *server) preflight(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, response{Message: "Connected, but device inspection failed: " + err.Error()})
 		return
 	}
+	stored, seenBefore := s.known.Lookup(c.Host)
+	changed := seenBefore && stored != fingerprint
 	message := "Device found. Confirm the fingerprint, then click Install."
+	switch {
+	case changed:
+		message = "This tablet's SSH key is not the one recorded last time. Reconnect over USB and confirm you are talking to your own tablet before continuing."
+	case seenBefore:
+		message = "Device found, and its SSH key matches the one recorded last time."
+	}
 	if !compatible {
 		message = "This installer supports only reMarkable Paper Pro firmware 3.26 or 3.27. Nothing was changed."
 	}
-	writeJSON(w, http.StatusOK, response{OK: true, Message: message, Fingerprint: fingerprint, Model: values["model"], OSVersion: values["os"], Compatible: compatible, Installed: values["installed"] == "yes", Active: values["active"] == "yes"})
+	writeJSON(w, http.StatusOK, response{OK: true, Message: message, Fingerprint: fingerprint, Model: values["model"], OSVersion: values["os"], Compatible: compatible, Installed: values["installed"] == "yes", Active: values["active"] == "yes", KnownHost: seenBefore && !changed, Changed: changed})
 }
 
+// install streams newline-delimited JSON progress events. An install uploads
+// several megabytes and then runs a multi-minute device script, so a single
+// blocking response would leave the page with no way to tell work from a hang.
 func (s *server) install(w http.ResponseWriter, r *http.Request) {
 	var c credentials
 	if !s.decode(w, r, &c) {
@@ -153,43 +201,123 @@ func (s *server) install(w http.ResponseWriter, r *http.Request) {
 	}
 	s.operationMu.Lock()
 	defer s.operationMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	flusher, _ := w.(http.Flusher)
+	encoder := json.NewEncoder(w)
+	step := 0
+	emit := func(v progress) {
+		_ = encoder.Encode(v)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	stage := func(message string) {
+		step++
+		emit(progress{Stage: message, Step: step, Total: installSteps})
+	}
+	fail := func(message string) { emit(progress{Error: message, Step: step, Total: installSteps}) }
+
+	stage("Verifying the release payload")
 	manifest, err := verifyPayload(s.payloadDir)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, response{Message: "Release payload is incomplete: " + err.Error()})
+		fail("Release payload is incomplete: " + err.Error())
 		return
 	}
-	client, _, err := connect(c, c.Fingerprint)
+
+	stage("Connecting to the tablet")
+	client, fingerprint, err := connect(c, s.expectedFingerprint(c))
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, response{Message: friendlySSHError(err)})
+		fail(friendlySSHError(err))
 		return
 	}
 	defer client.Close()
+
+	stage("Checking the model and firmware")
 	if _, compatible, inspectErr := inspectDevice(client); inspectErr != nil || !compatible {
-		writeJSON(w, http.StatusBadRequest, response{Message: "The model or firmware is not supported. Nothing was changed."})
+		fail("The model or firmware is not supported. Nothing was changed.")
 		return
 	}
+
+	stage("Preparing the staging directory")
 	if _, err := run(client, "rm -rf /tmp/trmnl-install && mkdir -p /tmp/trmnl-install/appload /tmp/trmnl-install/licenses"); err != nil {
-		writeJSON(w, http.StatusBadGateway, response{Message: err.Error()})
+		fail(err.Error())
 		return
 	}
+
+	names := make([]string, 0, len(manifest.Files))
 	for name := range manifest.Files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for i, name := range names {
+		emit(progress{Stage: fmt.Sprintf("Uploading %s (%d of %d)", name, i+1, len(names)), Step: step, Total: installSteps})
 		local := filepath.Join(s.payloadDir, filepath.FromSlash(name))
 		remote := "/tmp/trmnl-install/" + filepath.ToSlash(name)
 		if err := upload(client, local, remote); err != nil {
-			writeJSON(w, http.StatusBadGateway, response{Message: "Upload failed: " + err.Error()})
+			fail("Upload failed: " + err.Error())
 			return
 		}
 	}
-	out, err := run(client, "/bin/sh /tmp/trmnl-install/install-device-runtime.sh")
+	stage("Uploaded the payload")
+
+	stage("Installing on the tablet")
+	out, err := runWithin(client, "/bin/sh /tmp/trmnl-install/install-device-runtime.sh", installTimeout)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, response{Message: "Installation failed and was rolled back. " + strings.TrimSpace(out)})
+		fail("Installation failed and was rolled back. " + deviceFailure(out, err))
 		return
 	}
-	writeJSON(w, http.StatusOK, response{OK: true, Message: "TRMNL is installed. On the tablet, open AppLoad and tap TRMNL."})
+
+	// Only record the key once an install has actually succeeded with it.
+	s.known.Remember(c.Host, fingerprint)
+	message := "TRMNL is installed. On the tablet, open AppLoad and tap TRMNL."
+	if strings.Contains(out, "TRMNL_ACTIVATION_PENDING") {
+		// The files are installed and verified but the runtime did not start.
+		message = "TRMNL is installed, but the extension runtime did not start. Click Reactivate after reboot, or restart the tablet and try again."
+	}
+	emit(progress{OK: true, Step: installSteps, Total: installSteps, Stage: message})
 }
 
+const installSteps = 6
+
+// progress is one newline-delimited event from a long-running operation.
+type progress struct {
+	Stage string `json:"stage,omitempty"`
+	Step  int    `json:"step"`
+	Total int    `json:"total"`
+	OK    bool   `json:"ok,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+// reactivateCommand detaches the XOVI start script with setsid so restarting
+// Xochitl cannot take the SSH session with it, then waits for the injection to
+// appear. An earlier version backgrounded the job and returned immediately,
+// which let the session teardown kill the child before it ran while still
+// reporting success.
+const reactivateCommand = `set -e
+test -x /home/root/xovi/start
+test -f /home/root/xovi/exthome/appload/trmnl-remarkable/manifest.json
+rm -f /tmp/trmnl-xovi-start.log
+setsid sh -c 'exec /home/root/xovi/start' >/tmp/trmnl-xovi-start.log 2>&1 </dev/null &
+i=0
+while [ "$i" -lt 30 ]; do
+  sleep 1
+  i=$((i + 1))
+  pid=$(pidof xochitl 2>/dev/null | awk '{print $1}')
+  if [ -n "$pid" ] && [ -r "/proc/$pid/environ" ] &&
+     tr '\000' '\n' <"/proc/$pid/environ" | grep -q '^LD_PRELOAD=/home/root/xovi/xovi.so$'; then
+    echo REACTIVATED
+    exit 0
+  fi
+done
+echo "XOVI did not start within 30 seconds." >&2
+tail -n 5 /tmp/trmnl-xovi-start.log 2>/dev/null >&2
+exit 1`
+
 func (s *server) reactivate(w http.ResponseWriter, r *http.Request) {
-	s.deviceAction(w, r, "test -x /home/root/xovi/start && test -f /home/root/xovi/exthome/appload/trmnl-remarkable/manifest.json || exit 1; nohup sh -c 'sleep 1; exec /home/root/xovi/start' >/tmp/trmnl-xovi-start.log 2>&1 </dev/null &", "TRMNL is reactivating. Open AppLoad on the tablet in a few seconds.")
+	s.deviceAction(w, r, reactivateCommand, "TRMNL is active again. Open AppLoad on the tablet.")
 }
 
 func (s *server) recover(w http.ResponseWriter, r *http.Request) {
@@ -205,7 +333,7 @@ func (s *server) purge(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) quit(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost || r.Header.Get("X-TRMNL-CSRF") != s.csrf {
+	if r.Method != http.MethodPost || !s.validCSRF(r) {
 		writeJSON(w, http.StatusForbidden, response{Message: "Invalid installer session"})
 		return
 	}
@@ -223,18 +351,33 @@ func (s *server) deviceAction(w http.ResponseWriter, r *http.Request, command, s
 	}
 	s.operationMu.Lock()
 	defer s.operationMu.Unlock()
-	client, _, err := connect(c, c.Fingerprint)
+	client, fingerprint, err := connect(c, s.expectedFingerprint(c))
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, response{Message: friendlySSHError(err)})
 		return
 	}
+	s.known.Remember(c.Host, fingerprint)
 	defer client.Close()
 	out, err := run(client, command)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, response{Message: strings.TrimSpace(out)})
+		writeJSON(w, http.StatusBadGateway, response{Message: deviceFailure(out, err)})
 		return
 	}
 	writeJSON(w, http.StatusOK, response{OK: true, Message: success})
+}
+
+// deviceFailure prefers the tablet's own output. Guard scripts exit silently
+// when a required file is absent, so fall back to the transport error rather
+// than returning an empty message the page cannot explain.
+func deviceFailure(out string, err error) string {
+	if trimmed := strings.TrimSpace(out); trimmed != "" {
+		return trimmed
+	}
+	return "The tablet did not complete the request (" + err.Error() + "). Nothing was changed."
+}
+
+func (s *server) validCSRF(r *http.Request) bool {
+	return subtle.ConstantTimeCompare([]byte(r.Header.Get("X-TRMNL-CSRF")), []byte(s.csrf)) == 1
 }
 
 func (s *server) decode(w http.ResponseWriter, r *http.Request, dst any) bool {
@@ -242,7 +385,7 @@ func (s *server) decode(w http.ResponseWriter, r *http.Request, dst any) bool {
 		writeJSON(w, http.StatusMethodNotAllowed, response{Message: "POST required"})
 		return false
 	}
-	if r.Header.Get("X-TRMNL-CSRF") != s.csrf {
+	if !s.validCSRF(r) {
 		writeJSON(w, http.StatusForbidden, response{Message: "Invalid installer session"})
 		return false
 	}
@@ -279,14 +422,45 @@ func connect(c credentials, expectedFingerprint string) (*ssh.Client, string, er
 	return client, fingerprint, err
 }
 
+// Timeouts bound every remote operation. golang.org/x/crypto/ssh has no
+// context-aware session API, so a wedged tablet would otherwise block the
+// installer — and its operation lock — indefinitely.
+const (
+	inspectTimeout = 30 * time.Second
+	actionTimeout  = 3 * time.Minute
+	uploadTimeout  = 5 * time.Minute
+	installTimeout = 15 * time.Minute
+)
+
 func run(client *ssh.Client, command string) (string, error) {
+	return runWithin(client, command, actionTimeout)
+}
+
+func runWithin(client *ssh.Client, command string, timeout time.Duration) (string, error) {
 	session, err := client.NewSession()
 	if err != nil {
 		return "", err
 	}
 	defer session.Close()
-	b, err := session.CombinedOutput(command)
-	return string(b), err
+	type outcome struct {
+		out []byte
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		b, err := session.CombinedOutput(command)
+		done <- outcome{out: b, err: err}
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		return string(r.out), r.err
+	case <-timer.C:
+		// Closing the session unblocks the reader goroutine.
+		_ = session.Close()
+		return "", fmt.Errorf("the tablet stopped responding after %s; nothing further was sent", timeout)
+	}
 }
 
 func upload(client *ssh.Client, local, remote string) error {
@@ -301,7 +475,17 @@ func upload(client *ssh.Client, local, remote string) error {
 	}
 	defer session.Close()
 	session.Stdin = f
-	return session.Run("umask 077; cat > " + shellQuote(remote))
+	done := make(chan error, 1)
+	go func() { done <- session.Run("umask 077; cat > " + shellQuote(remote)) }()
+	timer := time.NewTimer(uploadTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		_ = session.Close()
+		return fmt.Errorf("upload of %s stalled for %s", filepath.Base(local), uploadTimeout)
+	}
 }
 
 func shellQuote(value string) string {
@@ -361,7 +545,7 @@ func parseKeyValues(s string) map[string]string {
 }
 
 func inspectDevice(client *ssh.Client) (map[string]string, bool, error) {
-	out, err := run(client, `printf 'model='; tr -d '\000' </proc/device-tree/model 2>/dev/null || true; printf '\nos='; sed -n 's/^IMG_VERSION="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' /etc/os-release | head -n1; printf '\narch='; uname -m; printf '\ninstalled='; test -f /home/root/xovi/exthome/appload/trmnl-remarkable/manifest.json && echo yes || echo no; printf 'active='; pid=$(pidof xochitl | awk '{print $1}'); if [ -n "$pid" ] && tr '\000' '\n' <"/proc/$pid/environ" 2>/dev/null | grep -q '^LD_PRELOAD=/home/root/xovi/xovi.so$'; then echo yes; else echo no; fi`)
+	out, err := runWithin(client, inspectCommand, inspectTimeout)
 	if err != nil {
 		return nil, false, err
 	}
@@ -369,6 +553,8 @@ func inspectDevice(client *ssh.Client) (map[string]string, bool, error) {
 	compatible := values["model"] == "reMarkable Ferrari" && values["arch"] == "aarch64" && (strings.HasPrefix(values["os"], "3.26.") || strings.HasPrefix(values["os"], "3.27."))
 	return values, compatible, nil
 }
+
+const inspectCommand = `printf 'model='; tr -d '\000' </proc/device-tree/model 2>/dev/null || true; printf '\nos='; sed -n 's/^IMG_VERSION="\{0,1\}\([^" ]*\)"\{0,1\}$/\1/p' /etc/os-release | head -n1; printf '\narch='; uname -m; printf '\ninstalled='; test -f /home/root/xovi/exthome/appload/trmnl-remarkable/manifest.json && echo yes || echo no; printf 'active='; pid=$(pidof xochitl | awk '{print $1}'); if [ -n "$pid" ] && tr '\000' '\n' <"/proc/$pid/environ" 2>/dev/null | grep -q '^LD_PRELOAD=/home/root/xovi/xovi.so$'; then echo yes; else echo no; fi`
 
 func writeJSON(w http.ResponseWriter, status int, v response) {
 	w.Header().Set("Content-Type", "application/json")
@@ -396,6 +582,32 @@ func friendlySSHError(err error) string {
 	default:
 		return s
 	}
+}
+
+// loopbackOnly rejects requests whose Host header is not a loopback name. The
+// listener already binds 127.0.0.1, but without this a DNS-rebinding page could
+// reach the installer as a same-origin document and read the CSRF token.
+func loopbackOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLoopbackHost(r.Host) {
+			http.Error(w, "the installer answers loopback requests only", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isLoopbackHost(value string) bool {
+	host := value
+	if h, _, err := net.SplitHostPort(value); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func securityHeaders(next http.Handler) http.Handler {

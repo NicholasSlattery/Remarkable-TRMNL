@@ -1,5 +1,78 @@
 # Changelog
 
+## 2.1.0 - 2026-08-05
+
+Validated on a reMarkable Paper Pro running 3.27.3.0; see
+[docs/validation/v2.1.md](docs/validation/v2.1.md).
+
+### Added
+
+- **Quiet hours.** Scheduled refreshes pause inside a window you choose, so the
+  tablet stops waking overnight. The dashboard stays on screen and manual
+  refresh still works.
+- **Battery saver.** Below 20% and off the charger, the refresh interval
+  stretches up to 4x, capped at six hours.
+- **Gradient smoothing.** Optional Floyd-Steinberg dithering to the colour
+  panel's palette removes the banding that dashboards drawn for bright screens
+  produce. Text and flat colour are left alone, and the palette is overridable
+  via `dither_palette` in `config.json`.
+- **Update check.** Off by default. When enabled, the tablet asks GitHub once a
+  day whether a newer release exists and says so in Settings.
+- **Wi-Fi signal reporting.** `readRSSI` previously always returned nothing, so
+  the `rssi` header was never sent. It now reads the live signal strength.
+- **Installer remembers each tablet's SSH key** and reports on later runs
+  whether it matches, changed, or has not been seen before. A changed key blocks
+  the install until you explicitly accept it.
+- **Installer shows real progress** during an install instead of an indefinite
+  spinner, streaming each stage and per-file upload.
+
+### Fixed
+
+- **Reactivate after reboot could silently do nothing.** It backgrounded the
+  XOVI start script and returned immediately, so the closing SSH session could
+  kill the job before it ran, while still reporting success. `install.sh` ended
+  the same way, so a fresh install could finish with the extension runtime not
+  running. Both now detach with `setsid` and wait for the injection to appear
+  before reporting. If it still does not start, the install is kept and the
+  installer tells you to use Reactivate rather than rolling back a good bundle.
+- Fix the dashboard freezing on the first inverted screen. Inverted renders are
+  now named after their source, so scheduled refreshes and **Previous** update
+  the display while **Dark / invert image** is enabled.
+- Read battery percentage, charge status, and voltage from the same power supply.
+  The Paper Pro exposes a second `type=Battery` device with no capacity file and
+  marker accessories as wireless supplies.
+- Guard the front-light device against concurrent access from the AppLoad
+  receive loop, the refresh scheduler and the shutdown path.
+- Redact signed image-URL query parameters from on-screen errors, refresh
+  history and the log file.
+- Bound every installer SSH operation with a timeout so an unresponsive tablet
+  can no longer hang the installer and its operation lock indefinitely.
+- Reject non-loopback `Host` headers in the installer and compare its CSRF token
+  in constant time.
+- Report a real message when a device script fails silently instead of an empty
+  installer error.
+- Keep only the newest app-bundle and source backups on the tablet so repeated
+  reinstalls cannot fill `/home/root`.
+- Accept an unquoted `IMG_VERSION` in the guided installer's firmware check,
+  matching `install.sh` and the installer's own probe.
+- Wait for Xochitl to reappear in `/proc` before verifying recovery, so a slow
+  restart can no longer report a false success.
+- Resolve the packaged validation record from `VERSION` instead of a hard-coded
+  filename, and fail packaging when it is missing.
+- Add SOCK_SEQPACKET protocol unit tests, render-path tests, error-redaction
+  tests, dithering, update-check, quiet-hours, known-host, installer CSRF/Host
+  tests, and a Windows CI job.
+
+### Changed
+
+- Pin the SHA-256 of the three redistributed upstream licence files instead of
+  trusting them at download time.
+- Derive each dependency's licence from its own file when generating the SBOM
+  rather than assuming one for every module.
+- The front-light watchdog polls every ten seconds instead of every two.
+- Documentation moved under `docs/`; the marketing and research files were
+  removed. The README was rewritten.
+
 ## 2.0.0 - 2026-08-05
 
 - Redesign the Windows installer as a responsive e-ink-inspired three-step

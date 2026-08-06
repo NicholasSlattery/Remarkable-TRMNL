@@ -26,6 +26,23 @@ $assets = @(
         Name = 'sources/rm-xovi-extensions-v19-source.tar.gz'
         Url = 'https://github.com/asivery/rm-xovi-extensions/archive/refs/tags/v19-23052026.tar.gz'
         SHA256 = '06460210d74779cea287c33ae99408b286908b4bc6c8ae8e9e6b8ca39d19fd80'
+    },
+    # Redistributed verbatim with the release, so they are pinned like every
+    # other fetched artefact rather than trusted at download time.
+    @{
+        Name = 'licenses/XOVI-LICENSE'
+        Url = 'https://raw.githubusercontent.com/asivery/xovi/v0.3.3/LICENSE'
+        SHA256 = '3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986'
+    },
+    @{
+        Name = 'licenses/APPLOAD-LICENSE'
+        Url = 'https://raw.githubusercontent.com/asivery/rm-appload/v0.5.3/LICENSE'
+        SHA256 = '3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986'
+    },
+    @{
+        Name = 'licenses/EXTENSIONS-LICENSE'
+        Url = 'https://raw.githubusercontent.com/asivery/rm-xovi-extensions/v19-23052026/LICENSE'
+        SHA256 = '3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986'
     }
 )
 
@@ -44,11 +61,5 @@ foreach ($asset in $assets) {
 $appLoadOut = Join-Path $Destination 'appload-release'
 if (Test-Path -LiteralPath $appLoadOut) { Remove-Item -Recurse -LiteralPath $appLoadOut }
 Expand-Archive -LiteralPath (Join-Path $Destination 'appload-aarch64.zip') -DestinationPath $appLoadOut
-
-$licenseDir = Join-Path $Destination 'licenses'
-New-Item -ItemType Directory -Path $licenseDir -Force | Out-Null
-Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/asivery/xovi/v0.3.3/LICENSE' -OutFile (Join-Path $licenseDir 'XOVI-LICENSE')
-Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/asivery/rm-appload/v0.5.3/LICENSE' -OutFile (Join-Path $licenseDir 'APPLOAD-LICENSE')
-Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/asivery/rm-xovi-extensions/v19-23052026/LICENSE' -OutFile (Join-Path $licenseDir 'EXTENSIONS-LICENSE')
 
 Write-Host "Verified runtime assets are ready in $Destination"

@@ -54,6 +54,29 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
           govulncheck ./...
 
+  # The installer only ships for Windows, but its build is otherwise exercised
+  # for the first time at tag time. This catches host-specific regressions in
+  # the installer and backend before a release runs build-release.ps1.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Unit tests and vet
+        run: |
+          go test ./...
+          go vet ./...
+      - name: Installer build
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui -X main.version=$(Get-Content VERSION)" -o installer.exe ./installer
+        shell: pwsh
+
   codeql:
     runs-on: ubuntu-latest
     permissions:

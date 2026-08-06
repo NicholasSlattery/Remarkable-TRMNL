@@ -22,19 +22,21 @@ var include = []string{
 	"diagnostics.sh",
 	"test-on-device.sh",
 	"README.md",
-	"BYOD_SETUP.md",
-	"PRIVACY.md",
-	"COMPATIBILITY.md",
-	"V2.0_VALIDATION.md",
 	"LICENSE",
 	"THIRD_PARTY_NOTICES.md",
+	"docs/trmnl-setup.md",
+	"docs/privacy.md",
+	"docs/compatibility.md",
 }
 
 func main() {
-	if len(os.Args) != 3 {
-		fmt.Fprintln(os.Stderr, "usage: go run scripts/package-device.go ROOT OUTPUT.tar.gz")
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: go run scripts/package-device.go ROOT OUTPUT.tar.gz [EXTRA_PATH...]")
 		os.Exit(2)
 	}
+	// Version-specific documents (the validation record) are passed in so the
+	// include list does not have to be edited for every release.
+	include = append(include, os.Args[3:]...)
 	root, err := filepath.Abs(os.Args[1])
 	check(err)
 	output, err := filepath.Abs(os.Args[2])

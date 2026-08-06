@@ -8,9 +8,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
+// Device is shared between the AppLoad receive loop, the refresh scheduler and
+// the shutdown path, so every access to the mutable Current field is guarded.
+// Path, Name, Min, Max, Original and Writable are fixed at discovery time.
 type Device struct {
+	mu       sync.Mutex
+	writeMu  sync.Mutex
 	Path     string `json:"path"`
 	Name     string `json:"name"`
 	Min      int    `json:"min"`
@@ -18,6 +24,25 @@ type Device struct {
 	Current  int    `json:"current"`
 	Original int    `json:"original"`
 	Writable bool   `json:"writable"`
+}
+
+// Info is a lock-free snapshot suitable for JSON encoding on another goroutine.
+type Info struct {
+	Path     string `json:"path"`
+	Name     string `json:"name"`
+	Min      int    `json:"min"`
+	Max      int    `json:"max"`
+	Current  int    `json:"current"`
+	Original int    `json:"original"`
+	Writable bool   `json:"writable"`
+}
+
+// Snapshot copies the device state under the lock. Callers must use it instead
+// of marshaling *Device directly.
+func (d *Device) Snapshot() Info {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return Info{Path: d.Path, Name: d.Name, Min: d.Min, Max: d.Max, Current: d.Current, Original: d.Original, Writable: d.Writable}
 }
 
 func Discover(root string) (*Device, error) {
@@ -49,16 +74,21 @@ func Discover(root string) (*Device, error) {
 func (d *Device) Read() (int, error) {
 	v, err := readInt(filepath.Join(d.Path, "brightness"))
 	if err == nil {
+		d.mu.Lock()
 		d.Current = v
+		d.mu.Unlock()
 	}
 	return v, err
 }
 
 func (d *Device) Percent() int {
+	d.mu.Lock()
+	current := d.Current
+	d.mu.Unlock()
 	if d.Max <= d.Min {
 		return 0
 	}
-	p := (d.Current - d.Min) * 100 / (d.Max - d.Min)
+	p := (current - d.Min) * 100 / (d.Max - d.Min)
 	if p < 0 {
 		return 0
 	}
@@ -84,6 +114,10 @@ func (d *Device) SetValue(value int) error {
 	if value < d.Min || value > d.Max {
 		return fmt.Errorf("brightness %d outside [%d,%d]", value, d.Min, d.Max)
 	}
+	// Serialize write-then-verify so a concurrent change cannot make a
+	// successful write look like a hardware failure.
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
 	if err := os.WriteFile(filepath.Join(d.Path, "brightness"), []byte(strconv.Itoa(value)+"\n"), 0644); err != nil {
 		return err
 	}

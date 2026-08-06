@@ -311,9 +311,10 @@
           <dt>Device</dt><dd id="model"></dd>
           <dt>Firmware</dt><dd id="os"></dd>
           <dt>Host key</dt><dd><code id="fingerprint"></code></dd>
+          <dt>Key history</dt><dd id="keyStatus"></dd>
           <dt>Status</dt><dd id="installed"></dd>
         </dl>
-        <label class="check"><input id="trust" type="checkbox"><span>I recognize this as my tablet and approve this fingerprint. The installer will not continue if it changes.</span></label>
+        <label class="check"><input id="trust" type="checkbox"><span id="trustLabel">I recognize this as my tablet and approve this key. It is remembered and checked on future runs.</span></label>
         <div class="actions">
           <button type="button" class="btn btn--primary js-op" id="install" disabled>Install TRMNL</button>
           <button type="button" class="btn js-op" id="reactivate" disabled>Reactivate after reboot</button>
@@ -354,7 +355,7 @@
 <script>
 const csrf='{{CSRF}}';
 const $=id=>document.getElementById(id);
-let fingerprint='', compatible=false, installed=false, active=false, keyVisible=false;
+let fingerprint='', compatible=false, installed=false, active=false, keyVisible=false, keyChanged=false;
 
 /* --- theme ---------------------------------------------------------- */
 function readTheme(){
@@ -417,7 +418,10 @@ function setLink(text,live){
 }
 
 /* --- status --------------------------------------------------------- */
-function creds(){return {host:$('host').value.trim(),password:$('password').value,fingerprint};}
+/* accept_new_key is only sent when the tablet's key differs from the recorded
+   one AND the user has ticked the confirmation, so a silent key change can
+   never be accepted on their behalf. */
+function creds(){return {host:$('host').value.trim(),password:$('password').value,fingerprint,accept_new_key:keyChanged&&$('trust').checked};}
 function setStatus(state,badge,node){
   $('status').className='status '+state;
   $('statusBadge').textContent=badge;
@@ -457,17 +461,54 @@ async function call(path, body){
   return data;
 }
 
+/* Streamed operations report newline-delimited JSON so the page can show real
+   progress instead of an indefinite spinner. */
+async function stream(path, body, onStage){
+  const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-TRMNL-CSRF':csrf},body:JSON.stringify(body)});
+  if(!response.ok||!response.body){
+    let message='Request failed';
+    try { const data=await response.json(); message=data.message||message; } catch {}
+    throw new Error(message);
+  }
+  const reader=response.body.getReader(), decoder=new TextDecoder();
+  let buffer='', last=null;
+  for(;;){
+    const {value,done}=await reader.read();
+    if(done) break;
+    buffer+=decoder.decode(value,{stream:true});
+    let newline;
+    while((newline=buffer.indexOf('\n'))>=0){
+      const line=buffer.slice(0,newline).trim();
+      buffer=buffer.slice(newline+1);
+      if(!line) continue;
+      let event;
+      try { event=JSON.parse(line); } catch { continue; }
+      last=event;
+      if(event.error) throw new Error(event.error);
+      onStage(event);
+    }
+  }
+  if(!last||!last.ok) throw new Error('The installer stopped before it finished. Nothing further was sent to the tablet.');
+  return last;
+}
+
 $('find').onclick=async()=>{
   if(!$('password').value){ done('Enter the reMarkable key shown in the tablet settings.',false); return; }
   busy('Looking for your tablet…');
   try{
     const d=await call('/api/preflight',creds());
-    fingerprint=d.fingerprint; compatible=d.compatible; installed=d.installed; active=d.active;
+    fingerprint=d.fingerprint; compatible=d.compatible; installed=d.installed; active=d.active; keyChanged=!!d.fingerprint_changed;
     $('model').textContent=d.model||'Unknown';
     $('os').textContent=d.os_version||'Unknown';
     $('fingerprint').textContent=fingerprint;
     $('installed').textContent=installed?(active?'TRMNL is active':'Installed; reactivate after reboot'):'Ready to install';
+    $('keyStatus').textContent=d.fingerprint_changed
+      ? 'Does not match the key recorded previously'
+      : (d.known_host?'Matches the key recorded previously':'Not seen before on this computer');
     $('deviceCard').hidden=false;
+    $('trustLabel').textContent=d.fingerprint_changed
+      ? 'This key has changed since the last install. I have verified over USB that this is my own tablet and I accept the new key.'
+      : 'I recognize this as my tablet and approve this key. It is remembered and checked on future runs.';
     $('trust').checked=false;
     setStep(compatible?2:1);
     setLink(d.model?'Linked · '+(d.model||'device'):'Linked',true);
@@ -478,12 +519,15 @@ $('trust').onchange=updateButtons;
 
 $('install').onclick=async()=>{
   setStep(3);
-  busy('Uploading and installing TRMNL. Keep the tablet connected…');
+  busy('Starting. Keep the tablet connected…');
   try{
-    const d=await call('/api/install',creds());
+    const d=await stream('/api/install',creds(),event=>{
+      const counter=event.total?' ('+event.step+'/'+event.total+')':'';
+      busy((event.stage||'Working')+counter);
+    });
     installed=true; active=true;
     $('installed').textContent='TRMNL is active';
-    done(d.message,true);
+    done(d.stage||'TRMNL is installed.',true);
   }catch(e){ done(e.message,false); }
 };
 $('reactivate').onclick=async()=>{

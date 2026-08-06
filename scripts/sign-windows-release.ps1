@@ -48,7 +48,7 @@ if ($AllowUntrusted) {
 if ($PublicCertificatePath) {
     if (-not (Test-Path -LiteralPath $PublicCertificatePath)) { throw "Public certificate not found: $PublicCertificatePath" }
     Copy-Item -LiteralPath $PublicCertificatePath -Destination (Join-Path $packageRoot 'SELF-SIGNED-CERTIFICATE.cer') -Force
-    Copy-Item -LiteralPath (Join-Path $root 'SELF_SIGNED_RELEASE.md') -Destination (Join-Path $packageRoot 'SELF-SIGNED-SIGNATURE.md') -Force
+    Copy-Item -LiteralPath (Join-Path $root 'docs\code-signing.md') -Destination (Join-Path $packageRoot 'SELF-SIGNED-SIGNATURE.md') -Force
     $certificateHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $PublicCertificatePath).Hash.ToLowerInvariant()
     $certificateDetails = @(
         "Subject: $($signature.SignerCertificate.Subject)"
