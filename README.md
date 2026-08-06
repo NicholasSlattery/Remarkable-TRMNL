@@ -138,7 +138,7 @@ never touches your notebooks, documents, or boot partitions — see
 | Gone after reboot | Use **Reactivate after reboot**. Returning to stock on reboot is deliberate |
 | Battery drains fast | Longer refresh interval, lower front light, and the battery settings above |
 
-Read [support](SUPPORT.md) before opening an issue, and never paste an API key,
+Read [support](.github/SUPPORT.md) before opening an issue, and never paste an API key,
 SSH password, or unredacted diagnostic into one.
 
 ## Security
@@ -152,7 +152,7 @@ must use HTTPS, credential-bearing cross-origin redirects are refused, and
 downloaded images are size- and dimension-checked before decoding. The app
 ignores firmware and reset directives from the server.
 
-Report vulnerabilities privately — see [SECURITY.md](SECURITY.md), not a public
+Report vulnerabilities privately — see [SECURITY.md](.github/SECURITY.md), not a public
 issue.
 
 ## Documentation
@@ -189,13 +189,13 @@ Layout:
 - `app/ui/TRMNL.qml` — the AppLoad frontend
 - `backend/cmd/trmnl-remarkable` — the ARM64 backend (Device API, scheduling, rendering)
 - `installer/` — the localhost Windows installer
-- `install.sh`, `uninstall.sh`, `recover-stock.sh` — on-device operations
+- `device/install.sh`, `device/uninstall.sh`, `device/recover-stock.sh` — on-device operations
 
 ## Contributing and licence
 
 Issues and pull requests are welcome — start with
-[CONTRIBUTING.md](CONTRIBUTING.md) and the
-[code of conduct](CODE_OF_CONDUCT.md).
+[CONTRIBUTING.md](.github/CONTRIBUTING.md) and the
+[code of conduct](.github/CODE_OF_CONDUCT.md).
 
 The project is MIT licensed. The installer also redistributes checksum-pinned
 XOVI and AppLoad components under their own LGPL/GPL terms; see

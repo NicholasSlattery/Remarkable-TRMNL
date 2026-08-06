@@ -32,7 +32,7 @@ jobs:
           test -z "$(gofmt -l backend installer)"
           go test -race ./...
           go vet ./...
-          shellcheck ./*.sh scripts/*.sh
+          shellcheck device/*.sh scripts/*.sh
           python3 -m compileall -q scripts tests
           qmllint -W 0 -I tests/qml-stubs app/ui/TRMNL.qml
           "$QT_ROOT_DIR/libexec/rcc" --binary -o /tmp/resources.rcc app/application.qrc

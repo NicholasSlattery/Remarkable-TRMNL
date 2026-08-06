@@ -31,7 +31,7 @@ jobs:
           go vet ./...
       - name: Shell and Python checks
         run: |
-          shellcheck ./*.sh scripts/*.sh
+          shellcheck device/*.sh scripts/*.sh
           python3 -m compileall -q scripts tests
       - name: QML lint and resources
         run: |

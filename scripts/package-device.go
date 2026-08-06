@@ -16,17 +16,29 @@ import (
 
 var include = []string{
 	"dist/trmnl-remarkable-app",
-	"install.sh",
-	"uninstall.sh",
-	"recover-stock.sh",
-	"diagnostics.sh",
-	"test-on-device.sh",
+	"device/install.sh",
+	"device/uninstall.sh",
+	"device/recover-stock.sh",
+	"device/diagnostics.sh",
+	"device/test-on-device.sh",
 	"README.md",
 	"LICENSE",
 	"THIRD_PARTY_NOTICES.md",
 	"docs/trmnl-setup.md",
 	"docs/privacy.md",
 	"docs/compatibility.md",
+}
+
+// device scripts live together in the repository, but existing installations
+// expect them at the root of /home/root/trmnl-remarkable. Keep the archive
+// names stable so a new installer can still recover or uninstall an older
+// installation using the same absolute paths.
+var archiveNames = map[string]string{
+	"device/install.sh":        "install.sh",
+	"device/uninstall.sh":      "uninstall.sh",
+	"device/recover-stock.sh":  "recover-stock.sh",
+	"device/diagnostics.sh":    "diagnostics.sh",
+	"device/test-on-device.sh": "test-on-device.sh",
 }
 
 func main() {
@@ -72,6 +84,9 @@ func main() {
 		rel, relErr := filepath.Rel(root, path)
 		check(relErr)
 		name := filepath.ToSlash(rel)
+		if archiveName, ok := archiveNames[name]; ok {
+			name = archiveName
+		}
 		mode := int64(0o644)
 		if info.IsDir() {
 			mode = 0o755
