@@ -24,7 +24,6 @@ var include = []string{
 	"README.md",
 	"LICENSE",
 	"THIRD_PARTY_NOTICES.md",
-	"docs/trmnl-setup.md",
 	"docs/privacy.md",
 	"docs/compatibility.md",
 }

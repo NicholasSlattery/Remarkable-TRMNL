@@ -71,7 +71,7 @@ try {
 }
 
 Copy-Item -LiteralPath (Join-Path $root 'docs\install.md') -Destination (Join-Path $packageRoot 'READ ME - Install TRMNL.md')
-Copy-Item -LiteralPath (Join-Path $root 'docs\trmnl-setup.md'),(Join-Path $root 'docs\privacy.md'),(Join-Path $root 'docs\compatibility.md'),$validationRecord,(Join-Path $root 'LICENSE'),(Join-Path $root 'THIRD_PARTY_NOTICES.md') -Destination $packageRoot
+Copy-Item -LiteralPath (Join-Path $root 'README.md'),(Join-Path $root 'docs\privacy.md'),(Join-Path $root 'docs\compatibility.md'),$validationRecord,(Join-Path $root 'LICENSE'),(Join-Path $root 'THIRD_PARTY_NOTICES.md') -Destination $packageRoot
 $sourceOut = Join-Path $packageRoot 'Corresponding Source'
 New-Item -ItemType Directory -Path $sourceOut -Force | Out-Null
 Copy-Item -Path (Join-Path $downloads 'sources\*.tar.gz') -Destination $sourceOut

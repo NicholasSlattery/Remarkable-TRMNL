@@ -424,7 +424,7 @@ func connect(c credentials, expectedFingerprint string) (*ssh.Client, string, er
 
 // Timeouts bound every remote operation. golang.org/x/crypto/ssh has no
 // context-aware session API, so a wedged tablet would otherwise block the
-// installer — and its operation lock — indefinitely.
+// installer and its operation lock indefinitely.
 const (
 	inspectTimeout = 30 * time.Second
 	actionTimeout  = 3 * time.Minute

@@ -264,13 +264,13 @@
   </div>
 
   <ol class="progress" id="progress">
-    <li class="on" id="step1"><div class="track"></div><span class="num">01 — Connect</span></li>
-    <li id="step2"><div class="track"></div><span class="num">02 — Verify</span></li>
-    <li id="step3"><div class="track"></div><span class="num">03 — Install</span></li>
+    <li class="on" id="step1"><div class="track"></div><span class="num">01: Connect</span></li>
+    <li id="step2"><div class="track"></div><span class="num">02: Verify</span></li>
+    <li id="step3"><div class="track"></div><span class="num">03: Install</span></li>
   </ol>
 
   <section class="pane" id="paneMain">
-    <p class="eyebrow" id="eyebrow">Step one — connect</p>
+    <p class="eyebrow" id="eyebrow">Step one: connect</p>
     <h2>Connect your reMarkable Paper Pro</h2>
     <p class="lede">Plug the tablet into this computer with USB, enable SSH/developer access in Settings, and enter the key shown by the tablet. Nothing changes on the tablet until you click Install.</p>
 
@@ -283,7 +283,7 @@
       <div class="field">
         <label for="host">Tablet address</label>
         <div class="input-shell"><input id="host" type="text" value="10.11.99.1" autocomplete="off" spellcheck="false"></div>
-        <p class="field-note">USB default — 10.11.99.1</p>
+        <p class="field-note">USB default: 10.11.99.1</p>
       </div>
       <div class="field">
         <label for="password">reMarkable key <span aria-hidden="true">·</span> SSH password</label>
@@ -293,7 +293,7 @@
         </div>
         <p class="field-note" id="keyNote">Hidden · Settings → Software → Developer mode</p>
         <div class="keyout" id="keyReadout" hidden>
-          <div class="cap">reMarkable key — visible</div>
+          <div class="cap">reMarkable key: visible</div>
           <div id="keyBody"></div>
         </div>
       </div>
@@ -305,7 +305,7 @@
     </div>
 
     <div class="card" id="deviceCard" hidden>
-      <div class="card__head"><span>Device record</span><span>Step 02 — Verify</span></div>
+      <div class="card__head"><span>Device record</span><span>Step 02: Verify</span></div>
       <div class="card__body">
         <dl class="spec">
           <dt>Device</dt><dd id="model"></dd>
@@ -321,7 +321,7 @@
           <button type="button" class="btn js-op" id="recover" disabled>Restore stock interface</button>
         </div>
         <div class="zone">
-          <div class="zone__head">Danger zone — irreversible</div>
+          <div class="zone__head">Danger zone: irreversible</div>
           <div class="zone__body">
             <p>Removing TRMNL keeps your API key and settings unless you also erase its data. Erasing cannot be undone.</p>
             <div class="actions">
@@ -345,7 +345,7 @@
 </div>
 
 <footer class="colophon">
-  <span>TRMNL for reMarkable — local installer, running on this computer only.</span>
+  <span>TRMNL for reMarkable. This local installer runs on this computer only.</span>
 </footer>
 
 <noscript>
@@ -403,7 +403,7 @@ $('revealKey').onclick=()=>{
 $('password').addEventListener('input',renderKey);
 
 /* --- progress + link state ------------------------------------------ */
-const stepNames={1:'Step one — connect',2:'Step two — verify',3:'Step three — install'};
+const stepNames={1:'Step one: connect',2:'Step two: verify',3:'Step three: install'};
 function setStep(n){
   [1,2,3].forEach(i=>{
     const li=$('step'+i);

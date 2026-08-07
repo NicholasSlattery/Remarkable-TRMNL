@@ -17,7 +17,7 @@ by TRMNL or reMarkable, and a firmware update can break it.
 > [!CAUTION]
 > **Enabling Developer Mode factory-resets the Paper Pro.** Sync or export
 > everything you care about first. Developer Mode also lowers the tablet's
-> security, and uninstalling this app does not turn it back off — leaving it
+> security, and uninstalling this app does not turn it back off. Leaving it
 > requires reMarkable's [software recovery](https://support.remarkable.com/s/article/Software-recovery),
 > which erases local data again. Read reMarkable's
 > [Developer Mode notes](https://support.remarkable.com/s/article/Developer-mode)
@@ -42,7 +42,7 @@ versions rather than guessing. See [compatibility](docs/compatibility.md).
 2. Download the release ZIP and `SHA256SUMS.txt`, then check the hash matches:
 
    ```powershell
-   Get-FileHash .\TRMNL-for-reMarkable-2.1.0-Windows-x64.zip -Algorithm SHA256
+   Get-FileHash .\TRMNL-for-reMarkable-2.1.1-Windows-x64.zip -Algorithm SHA256
    ```
 
 3. Extract the whole ZIP. Run **TRMNL Installer.exe** with the `payload` folder
@@ -53,7 +53,7 @@ versions rather than guessing. See [compatibility](docs/compatibility.md).
 6. On the tablet, open **AppLoad** and tap **TRMNL**.
 
 Windows will warn about an unknown publisher. The installer is signed with a
-self-signed certificate, which Windows does not trust automatically — verify the
+self-signed certificate, which Windows does not trust automatically. Verify the
 checksum and read [code signing](docs/code-signing.md) before deciding to run it.
 
 Your SSH password stays in the browser tab and the local installer process. It
@@ -62,15 +62,69 @@ Longer instructions: [install guide](docs/install.md).
 
 ## Connect it to TRMNL
 
-Tap the upper-right corner of the tablet screen, then **Settings**.
+Use these steps to connect the app to the hosted TRMNL cloud. If you run a fully
+self-hosted BYOS server, the hosted BYOD license and TRMNL Device API key are not
+required. Choose the custom server option and enter its HTTPS origin and device
+identity instead. Plain HTTP is only accepted for a loopback mock on the tablet.
 
-For TRMNL cloud, paste the **Device API Key** from your claimed BYOD device's
-Developer Perks page and confirm the Device ID matches its Wi-Fi MAC. Do not use
-the account token starting with `user_` — that is a different API. Full
-walkthrough: [TRMNL setup](docs/trmnl-setup.md).
+### 1. Obtain and claim a BYOD license
 
-For a self-hosted BYOS server, choose the custom server option and enter its
-HTTPS origin. Plain HTTP is only accepted for a loopback mock on the tablet.
+The hosted TRMNL service requires one BYOD license for a third-party device.
+
+[Buy TRMNL BYOD](https://shop.trmnl.com/products/byod)
+
+This is a direct, non-affiliate product link. The project receives no
+commission.
+
+After purchase, sign in to TRMNL and use the order number to claim or add the
+BYOD device. TRMNL's help center explains the claim and Friendly ID flow:
+[Find your Friendly ID](https://help.trmnl.com/en/articles/12632379-find-your-friendly-id).
+
+### 2. Configure the device model
+
+In the TRMNL device settings, choose or create the closest custom model with:
+
+- Resolution: **1620 x 2160**
+- Orientation: **portrait**
+- Color capability: **full color / 16.7M** when the model editor offers it
+- Image format: **PNG**
+
+Use fit mode in the tablet app if a plugin sends a different aspect ratio. The
+Paper Pro can display color, but a plugin or template must also render color.
+
+### 3. Get the correct Device API key
+
+1. Sign in at [trmnl.com](https://trmnl.com/).
+2. Open **Devices** and select or edit the claimed BYOD device.
+3. Open **Developer Perks**. The label may be under a gear or edit view.
+4. Copy that device's **Device API Key**.
+
+Do not use the Account API token from account settings. Account tokens begin
+with `user_`, use bearer authentication, and are for a different API. This app
+needs the device-scoped key used as the `access-token` header. Treat it as a
+password and never paste it into an issue, screenshot, log, or diagnostics post.
+
+### 4. Enter it on the tablet
+
+1. Open TRMNL in AppLoad and tap the upper-right corner of the screen.
+2. Choose **Settings** and leave the server on **TRMNL cloud**.
+3. Paste the Device API Key.
+4. Confirm the pre-filled **Device ID / MAC address** matches the Wi-Fi MAC in
+   the TRMNL BYOD device record. Correct it if the account uses another value.
+5. Tap **Test connection**, then **Save**.
+
+The key is stored at `/home/root/.config/trmnl-remarkable/config.json` with mode
+`0600`. It is masked in the UI after save and redacted from diagnostics.
+
+### 5. Confirm operation
+
+Tap **Next screen** and confirm a playlist image appears. In diagnostics, check
+that the last refresh succeeded and that the next refresh time is present.
+
+An HTTP 401 or 403 usually means the key is wrong or the device is unclaimed. A
+`user_...` value is definitely the wrong key. An HTTP 429 means the service is
+rate limiting requests. The client honors the server's `Retry-After` value
+instead of repeatedly requesting.
 
 ## Using it
 
@@ -80,7 +134,7 @@ HTTPS origin. Plain HTTP is only accepted for a loopback mock on the tablet.
 | Refresh, next screen, previous screen | Buttons in the controls panel |
 | Front light | Slider, or follow the system brightness |
 | Refresh history | **History** in the controls panel |
-| Diagnostics | **Diagnostics** — secrets are redacted |
+| Diagnostics | **Diagnostics** (secrets are redacted) |
 | Back to reMarkable | AppLoad's downward swipe from centre-top, the on-screen button, or hold the upper-left corner for two seconds |
 
 Opening and closing an overlay triggers a local e-ink cleanup. It does not spend
@@ -122,7 +176,7 @@ installer again, find your tablet, and pick an action:
 | **Uninstall and erase data** | Also removes settings, cache, history, and logs |
 
 None of these turn off Developer Mode. TRMNL only writes under `/home/root` and
-never touches your notebooks, documents, or boot partitions — see
+never touches your notebooks, documents, or boot partitions. See
 [privacy](docs/privacy.md) for the exact paths.
 
 ## If something goes wrong
@@ -133,7 +187,7 @@ never touches your notebooks, documents, or boot partitions — see
 | Address won't connect | Use `10.11.99.1` over USB, or the tablet's local IP over Wi-Fi |
 | SSH key changed | Don't click past it. Reconnect over USB and confirm it is your tablet before accepting |
 | HTTP 401 or 403 | Use the Device API Key from a claimed BYOD device, not a `user_...` token |
-| HTTP 429 | Wait — the app honours `Retry-After` |
+| HTTP 429 | Wait; the app honours `Retry-After` |
 | Dashboard is monochrome | Check the plugin renders colour; the tablet can't add colour that isn't in the image |
 | Gone after reboot | Use **Reactivate after reboot**. Returning to stock on reboot is deliberate |
 | Battery drains fast | Longer refresh interval, lower front light, and the battery settings above |
@@ -152,7 +206,7 @@ must use HTTPS, credential-bearing cross-origin redirects are refused, and
 downloaded images are size- and dimension-checked before decoding. The app
 ignores firmware and reset directives from the server.
 
-Report vulnerabilities privately — see [SECURITY.md](.github/SECURITY.md), not a public
+Report vulnerabilities privately. See [SECURITY.md](.github/SECURITY.md), not a public
 issue.
 
 ## Documentation
@@ -160,7 +214,6 @@ issue.
 | Topic | |
 |---|---|
 | Install walkthrough | [docs/install.md](docs/install.md) |
-| TRMNL/BYOD setup | [docs/trmnl-setup.md](docs/trmnl-setup.md) |
 | Supported devices and firmware | [docs/compatibility.md](docs/compatibility.md) |
 | Privacy and stored data | [docs/privacy.md](docs/privacy.md) |
 | Windows code signing | [docs/code-signing.md](docs/code-signing.md) |
@@ -176,7 +229,7 @@ and ShellCheck.
 
 ```powershell
 ./scripts/build.ps1
-./scripts/build-release.ps1 -Version 2.1.0
+./scripts/build-release.ps1 -Version 2.1.1
 ```
 
 `build.ps1` runs formatting, tests, `go vet`, the ARM64 cross-build, QML
@@ -186,14 +239,14 @@ SBOM, and checksums under `release/`.
 
 Layout:
 
-- `app/ui/TRMNL.qml` — the AppLoad frontend
-- `backend/cmd/trmnl-remarkable` — the ARM64 backend (Device API, scheduling, rendering)
-- `installer/` — the localhost Windows installer
-- `device/install.sh`, `device/uninstall.sh`, `device/recover-stock.sh` — on-device operations
+- `app/ui/TRMNL.qml`: the AppLoad frontend
+- `backend/cmd/trmnl-remarkable`: the ARM64 backend (Device API, scheduling, rendering)
+- `installer/`: the localhost Windows installer
+- `device/install.sh`, `device/uninstall.sh`, `device/recover-stock.sh`: on-device operations
 
 ## Contributing and licence
 
-Issues and pull requests are welcome — start with
+Issues and pull requests are welcome. Start with
 [CONTRIBUTING.md](.github/CONTRIBUTING.md) and the
 [code of conduct](.github/CODE_OF_CONDUCT.md).
 

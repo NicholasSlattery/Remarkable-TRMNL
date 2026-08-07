@@ -14,14 +14,15 @@ No command line is required.
 3. Sync/export your documents, enable Developer Mode, complete the reset and
    onboarding, then display the tablet's SSH password.
 4. Charge above 20% and connect the tablet directly to Windows by USB.
-5. If you use TRMNL cloud, complete the [TRMNL setup](trmnl-setup.md) first.
+5. If you use TRMNL cloud, complete **Connect it to TRMNL** in the project
+   README first.
 
 ## Verify the download
 
 Download the ZIP and `SHA256SUMS.txt` from the same GitHub Release. In PowerShell:
 
 ```powershell
-Get-FileHash .\TRMNL-for-reMarkable-2.1.0-Windows-x64.zip -Algorithm SHA256
+Get-FileHash .\TRMNL-for-reMarkable-2.1.1-Windows-x64.zip -Algorithm SHA256
 ```
 
 The value must exactly match `SHA256SUMS.txt`. Extract the entire ZIP; do not run
