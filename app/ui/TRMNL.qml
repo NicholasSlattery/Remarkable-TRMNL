@@ -14,6 +14,7 @@ Rectangle {
         base_url: "https://trmnl.com", fit_mode: "fit", orientation: "auto",
         minimum_refresh_seconds: 60, restore_brightness_on_exit: true,
         use_system_brightness: true, brightness_percent: 50,
+        brightness_schedule_enabled: false, brightness_schedule: [],
         start_with_cache_offline: true, wake_for_refresh: true, logging_level: "info"
     })
     property string dashboardSource: ""
@@ -23,9 +24,17 @@ Rectangle {
     property bool offline: false
     property bool controlsVisible: false
     property bool settingsVisible: false
+    property bool brightnessScheduleVisible: false
     property bool apiKeyConfigured: false
     property bool initialized: false
     property int cleaningPhase: 0
+    property var scheduleSlots: []
+    property var scheduleDayNames: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    property int scheduleStartDay: -1
+    property int scheduleEndDay: -1
+    property int scheduleStartSlot: -1
+    property int scheduleEndSlot: -1
+    property bool scheduleDirty: false
 
     function unloading() { endpoint.terminate() }
     function fitValue() {
@@ -46,6 +55,8 @@ Rectangle {
             use_system_brightness: settingsUseSystemBrightness.checked,
             restore_brightness_on_exit: restoreBrightness.checked,
             brightness_percent: Math.round(settingsBrightness.value),
+            brightness_schedule_enabled: !!appConfig.brightness_schedule_enabled,
+            brightness_schedule: appConfig.brightness_schedule || [],
             start_with_cache_offline: startCached.checked,
             always_on: false,
             wake_for_refresh: wakeForRefresh.checked,
@@ -68,7 +79,7 @@ Rectangle {
         apiKeyConfigured = !!s.api_key_configured
         if (s.brightness_percent !== undefined) {
             brightness.value = s.brightness_percent
-            settingsBrightness.value = s.brightness_percent
+            settingsBrightness.value = appConfig.brightness_percent === undefined ? s.brightness_percent : appConfig.brightness_percent
         }
         useSystemBrightness.checked = !!appConfig.use_system_brightness
         settingsUseSystemBrightness.checked = !!appConfig.use_system_brightness
@@ -131,17 +142,115 @@ Rectangle {
         if (hours < 48) return hours.toFixed(1) + " hours"
         return (hours / 24).toFixed(1) + " days"
     }
+    function loadBrightnessSchedule() {
+        var source = appConfig.brightness_schedule || []
+        var slots = []
+        for (var i = 0; i < 336; ++i) {
+            var value = i < source.length ? Number(source[i]) : -1
+            slots.push(value >= 0 && value <= 100 ? Math.round(value) : -1)
+        }
+        scheduleSlots = slots
+        scheduleEnabled.checked = !!appConfig.brightness_schedule_enabled
+        scheduleDirty = false
+        scheduleStartDay = scheduleEndDay = scheduleStartSlot = scheduleEndSlot = -1
+    }
+    function showBrightnessSchedule(show) {
+        if (show) loadBrightnessSchedule()
+        brightnessScheduleVisible = show
+        controlsVisible = false
+        settingsVisible = false
+        cleanScreen()
+    }
+    function scheduleTime(slot) {
+        if (slot >= 48) return "24:00"
+        var hour = Math.floor(slot / 2)
+        return (hour < 10 ? "0" : "") + hour + (slot % 2 ? ":30" : ":00")
+    }
+    function selectedFirstDay() { return Math.min(scheduleStartDay, scheduleEndDay) }
+    function selectedLastDay() { return Math.max(scheduleStartDay, scheduleEndDay) }
+    function selectedFirstSlot() { return Math.min(scheduleStartSlot, scheduleEndSlot) }
+    function selectedLastSlot() { return Math.max(scheduleStartSlot, scheduleEndSlot) }
+    function scheduleCellSelected(day, slot) {
+        if (scheduleStartDay < 0 || scheduleStartSlot < 0) return false
+        return day >= selectedFirstDay() && day <= selectedLastDay()
+                && slot >= selectedFirstSlot() && slot <= selectedLastSlot()
+    }
+    function scheduleDayRange() {
+        if (scheduleStartDay < 0) return "No days selected"
+        var first = selectedFirstDay(), last = selectedLastDay()
+        return first === last ? scheduleDayNames[first] : scheduleDayNames[first] + "–" + scheduleDayNames[last]
+    }
+    function scheduleSelectionSummary() {
+        if (scheduleStartDay < 0 || scheduleStartSlot < 0) return "Drag across the grid to select days and times"
+        return scheduleDayRange() + "  ·  " + scheduleTime(selectedFirstSlot()) + "–"
+                + scheduleTime(selectedLastSlot() + 1) + "  ·  "
+                + (scheduleSelectionUsesDefault() ? "using default brightness" : "setting " + Math.round(scheduleBrightness.value) + "%")
+    }
+    function scheduleSelectionUsesDefault() {
+        if (scheduleStartDay < 0 || scheduleStartSlot < 0) return false
+        for (var slot = selectedFirstSlot(); slot <= selectedLastSlot(); ++slot) {
+            for (var day = selectedFirstDay(); day <= selectedLastDay(); ++day) {
+                if (scheduleSlots[slot * 7 + day] >= 0) return false
+            }
+        }
+        return true
+    }
+    function scheduleSlotColor(percent) {
+        if (percent === undefined || percent < 0) return "#f7f5ef"
+        if (percent <= 20) return "#3b3b3b"
+        if (percent <= 40) return "#686868"
+        if (percent <= 60) return "#929292"
+        if (percent <= 80) return "#bcbcbc"
+        return "#dedede"
+    }
+    function beginScheduleSelection(x, y) {
+        var day = Math.max(0, Math.min(6, Math.floor(x / (scheduleGrid.width / 7))))
+        var slot = Math.max(0, Math.min(47, Math.floor(y / (scheduleGrid.height / 48))))
+        scheduleStartDay = scheduleEndDay = day
+        scheduleStartSlot = scheduleEndSlot = slot
+        var existing = scheduleSlots[slot * 7 + day]
+        scheduleBrightness.value = existing >= 0 ? existing : (appConfig.brightness_percent === undefined ? 50 : appConfig.brightness_percent)
+    }
+    function extendScheduleSelection(x, y) {
+        scheduleEndDay = Math.max(0, Math.min(6, Math.floor(x / (scheduleGrid.width / 7))))
+        scheduleEndSlot = Math.max(0, Math.min(47, Math.floor(y / (scheduleGrid.height / 48))))
+        scheduleRefreshDelay.restart()
+    }
+    function applyBrightnessToSelection(percent) {
+        if (scheduleStartDay < 0 || scheduleStartSlot < 0) return
+        var slots = scheduleSlots.slice(0)
+        for (var slot = selectedFirstSlot(); slot <= selectedLastSlot(); ++slot) {
+            for (var day = selectedFirstDay(); day <= selectedLastDay(); ++day) {
+                slots[slot * 7 + day] = Math.max(0, Math.min(100, Math.round(percent)))
+            }
+        }
+        scheduleSlots = slots
+        scheduleDirty = true
+        scheduleRefreshDelay.restart()
+    }
+    function clearBrightnessSelection() {
+        if (scheduleStartDay < 0 || scheduleStartSlot < 0) return
+        var slots = scheduleSlots.slice(0)
+        for (var slot = selectedFirstSlot(); slot <= selectedLastSlot(); ++slot) {
+            for (var day = selectedFirstDay(); day <= selectedLastDay(); ++day) slots[slot * 7 + day] = -1
+        }
+        scheduleSlots = slots
+        scheduleDirty = true
+        scheduleRefreshDelay.restart()
+    }
     function showControls(show) {
         controlsVisible = show
-        if (show) settingsVisible = false
+        if (show) { settingsVisible = false; brightnessScheduleVisible = false }
         cleanScreen()
     }
     function showSettings(show) {
         if (show) configureFields()
         settingsVisible = show
         controlsVisible = false
+        brightnessScheduleVisible = false
         cleanScreen()
     }
+    Timer { id: scheduleRefreshDelay; interval: 320; onTriggered: root.cleanScreen() }
 
     Timer {
         id: panelRefreshDelay
@@ -198,6 +307,7 @@ Rectangle {
             if (Qt.application.state === Qt.ApplicationActive) {
                 root.controlsVisible = false
                 root.settingsVisible = false
+                root.brightnessScheduleVisible = false
                 diagnosticsPopup.close()
                 root.cleanScreen()
                 endpoint.sendMessage(10, "")
@@ -307,6 +417,14 @@ Rectangle {
                 }
                 Timer { id: brightnessDebounce; interval: 250; onTriggered: endpoint.sendMessage(6, JSON.stringify({percent:Math.round(brightness.value)})) }
                 CheckBox { id: useSystemBrightness; text: "Use system brightness"; font.pixelSize: 24; onClicked: { settingsUseSystemBrightness.checked = checked; endpoint.sendMessage(13, JSON.stringify({use_system_brightness:checked})) } }
+                Button {
+                    text: root.appState.brightness_schedule_active
+                          ? "Brightness schedule  ·  now " + root.appState.scheduled_brightness_percent + "%"
+                          : "Brightness schedule"
+                    width: parent.width; height: 82; font.pixelSize: 25; font.bold: true
+                    enabled: root.appState.brightness !== undefined
+                    onClicked: root.showBrightnessSchedule(true)
+                }
                 Row {
                     spacing: 14
                     Button { text: "Refresh now"; width: 220; height: 78; font.pixelSize: 23; onClicked: endpoint.sendMessage(4, "") }

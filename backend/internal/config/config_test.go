@@ -13,6 +13,9 @@ func TestSaveLoadAndPermissions(t *testing.T) {
 	c := Defaults()
 	c.APIKey = "secret"
 	c.BrightnessPercent = 150
+	c.UseSystemBrightness = false
+	c.BrightnessScheduleEnabled = true
+	c.BrightnessSchedule = []int{25}
 	if err := Save(p, c); err != nil {
 		t.Fatal(err)
 	}
@@ -20,7 +23,7 @@ func TestSaveLoadAndPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.APIKey != "secret" || got.BrightnessPercent != 100 {
+	if got.APIKey != "secret" || got.BrightnessPercent != 100 || !got.BrightnessScheduleEnabled || len(got.BrightnessSchedule) != BrightnessScheduleSize || got.BrightnessSchedule[0] != 25 {
 		t.Fatalf("unexpected config: %#v", got)
 	}
 	if runtime.GOOS != "windows" {
@@ -37,6 +40,64 @@ func TestSaveLoadAndPermissions(t *testing.T) {
 func TestDefaultsEnableScheduledWake(t *testing.T) {
 	if !Defaults().WakeForRefresh {
 		t.Fatal("scheduled wake should be enabled by default")
+	}
+}
+
+func TestBrightnessScheduleStartsOnMondayAndUsesHalfHours(t *testing.T) {
+	c := Defaults()
+	c.BrightnessScheduleEnabled = true
+	c.BrightnessSchedule = make([]int, BrightnessScheduleSize)
+	for i := range c.BrightnessSchedule {
+		c.BrightnessSchedule[i] = -1
+	}
+	c.BrightnessSchedule[17*7] = 35
+	c.BrightnessSchedule[47*7+6] = 5
+
+	monday := time.Date(2026, 8, 3, 8, 42, 0, 0, time.Local)
+	if got, ok := c.ScheduledBrightness(monday); !ok || got != 35 {
+		t.Fatalf("Monday 08:42 = %d, %v; want 35, true", got, ok)
+	}
+	sunday := time.Date(2026, 8, 9, 23, 59, 0, 0, time.Local)
+	if got, ok := c.ScheduledBrightness(sunday); !ok || got != 5 {
+		t.Fatalf("Sunday 23:59 = %d, %v; want 5, true", got, ok)
+	}
+	if _, ok := c.ScheduledBrightness(monday.Add(30 * time.Minute)); ok {
+		t.Fatal("an unassigned slot should use the default brightness")
+	}
+}
+
+func TestNormalizeBrightnessSchedule(t *testing.T) {
+	c := Defaults()
+	c.BrightnessScheduleEnabled = true
+	c.BrightnessSchedule = []int{-9, 150, 40}
+	c.UseSystemBrightness = false
+	if err := c.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.BrightnessSchedule) != BrightnessScheduleSize {
+		t.Fatalf("schedule length = %d", len(c.BrightnessSchedule))
+	}
+	if c.BrightnessSchedule[0] != -1 || c.BrightnessSchedule[1] != 100 || c.BrightnessSchedule[2] != 40 || c.BrightnessSchedule[3] != -1 {
+		t.Fatalf("schedule was not normalized: %v", c.BrightnessSchedule[:4])
+	}
+
+	c = Defaults()
+	c.BrightnessScheduleEnabled = true
+	if err := c.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if c.BrightnessScheduleEnabled {
+		t.Fatal("an empty schedule should not remain enabled")
+	}
+
+	c.BrightnessSchedule = make([]int, BrightnessScheduleSize)
+	c.BrightnessScheduleEnabled = true
+	c.UseSystemBrightness = true
+	if err := c.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if c.BrightnessScheduleEnabled {
+		t.Fatal("system brightness and the custom schedule cannot both be enabled")
 	}
 }
 

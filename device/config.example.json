@@ -10,6 +10,7 @@
   "use_system_brightness": true,
   "restore_brightness_on_exit": true,
   "brightness_percent": 50,
+  "brightness_schedule_enabled": false,
   "start_with_cache_offline": true,
   "always_on": false,
   "wake_for_refresh": true,

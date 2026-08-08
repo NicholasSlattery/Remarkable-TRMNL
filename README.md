@@ -133,6 +133,7 @@ instead of repeatedly requesting.
 | Controls and Settings | Tap the upper-right corner |
 | Refresh, next screen, previous screen | Buttons in the controls panel |
 | Front light | Slider, or follow the system brightness |
+| Weekly front-light schedule | **Brightness schedule** in the controls panel; drag over Monday-first half-hour cells |
 | Refresh history | **History** in the controls panel |
 | Diagnostics | **Diagnostics** (secrets are redacted) |
 | Back to reMarkable | AppLoad's downward swipe from centre-top, the on-screen button, or hold the upper-left corner for two seconds |

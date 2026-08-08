@@ -68,6 +68,17 @@ func TestReadDeviceIDPrefersWiFiMAC(t *testing.T) {
 	}
 }
 
+func TestUntilNextBrightnessSlot(t *testing.T) {
+	at := time.Date(2026, 8, 3, 8, 12, 30, 0, time.Local)
+	if got, want := untilNextBrightnessSlot(at), 17*time.Minute+30*time.Second; got != want {
+		t.Fatalf("untilNextBrightnessSlot() = %v, want %v", got, want)
+	}
+	at = time.Date(2026, 8, 3, 8, 30, 0, 0, time.Local)
+	if got := untilNextBrightnessSlot(at); got != 30*time.Minute {
+		t.Fatalf("boundary duration = %v, want 30m", got)
+	}
+}
+
 // QML's Image ignores a source assignment that repeats the current URL, so
 // every distinct cached screen must render to a distinct path.
 func TestRenderedViewPathTracksItsSource(t *testing.T) {

@@ -56,6 +56,7 @@ const (
 	msgBatteryStart      uint32 = 14
 	msgBatteryStop       uint32 = 15
 	msgBatteryReset      uint32 = 16
+	msgSaveBrightnessSchedule uint32 = 17
 	msgState             uint32 = 101
 	msgImage             uint32 = 102
 	msgStatus            uint32 = 103
@@ -99,6 +100,7 @@ type app struct {
 	batteryTest                      batterytest.State
 	updates                          *update.Checker
 	updateResult                     update.Result
+	brightnessScheduleChanged        chan struct{}
 }
 
 func main() {
@@ -147,7 +149,7 @@ func main() {
 	}
 	defer conn.Close()
 	ctx, cancel := context.WithCancel(context.Background())
-	a := &app{cfg: cfg, configPath: configPath, dataDir: dataDir, historyPath: filepath.Join(dataDir, "history.json"), batteryPath: filepath.Join(dataDir, "battery-test.json"), conn: conn, client: trmnl.New(), cache: cache.Store{Dir: filepath.Join(home, ".cache", "trmnl-remarkable")}, triggers: make(chan trigger, 4), ctx: ctx, cancel: cancel}
+	a := &app{cfg: cfg, configPath: configPath, dataDir: dataDir, historyPath: filepath.Join(dataDir, "history.json"), batteryPath: filepath.Join(dataDir, "battery-test.json"), conn: conn, client: trmnl.New(), cache: cache.Store{Dir: filepath.Join(home, ".cache", "trmnl-remarkable")}, triggers: make(chan trigger, 4), brightnessScheduleChanged: make(chan struct{}, 1), ctx: ctx, cancel: cancel}
 	a.client.Version = version
 	a.client.Battery = readBatteryVoltage
 	a.client.RSSI = readRSSI
@@ -162,7 +164,7 @@ func main() {
 		a.light = light
 		a.startBrightnessGuard()
 		if !cfg.UseSystemBrightness {
-			if err := a.light.SetPercent(cfg.BrightnessPercent); err != nil {
+			if err := a.applyConfiguredBrightness(time.Now()); err != nil {
 				log.Printf("saved brightness could not be applied: %v", err)
 			}
 		}
@@ -187,6 +189,7 @@ func main() {
 		cancel()
 	}()
 	go a.scheduler()
+	go a.brightnessScheduler()
 	go a.batterySampler()
 	go a.updateWatcher()
 	if e, ok := a.cache.Latest(); ok && cfg.StartWithCacheOffline {
@@ -242,9 +245,10 @@ func (a *app) handle(m protocol.Message) {
 			if next.UseSystemBrightness {
 				_ = a.light.Restore()
 			} else {
-				_ = a.setBrightness(next.BrightnessPercent)
+				_ = a.applyConfiguredBrightness(time.Now())
 			}
 		}
+		a.signalBrightnessScheduleChanged()
 		if e, ok := a.cache.Latest(); ok {
 			a.sendImage(e, true)
 		}
@@ -277,6 +281,7 @@ func (a *app) handle(m protocol.Message) {
 		a.send(msgDiagnosticsResult, a.diagnostics())
 	case msgResume:
 		a.recordBatteryWake()
+		_ = a.applyConfiguredBrightness(time.Now())
 		a.queue(trigger{advance: false, reason: "resume"})
 	case msgResetSettings:
 		next := config.Defaults()
@@ -290,6 +295,7 @@ func (a *app) handle(m protocol.Message) {
 		if a.light != nil {
 			_ = a.light.Restore()
 		}
+		a.signalBrightnessScheduleChanged()
 		if e, ok := a.cache.Latest(); ok {
 			a.sendImage(e, true)
 		}
@@ -323,9 +329,10 @@ func (a *app) handle(m protocol.Message) {
 			if *p.UseSystemBrightness {
 				_ = a.light.Restore()
 			} else {
-				_ = a.light.SetPercent(cfg.BrightnessPercent)
+				_ = a.applyConfiguredBrightness(time.Now())
 			}
 		}
+		a.signalBrightnessScheduleChanged()
 		if e, ok := a.cache.Latest(); ok {
 			a.sendImage(e, true)
 		}
@@ -336,7 +343,103 @@ func (a *app) handle(m protocol.Message) {
 		a.stopBatteryTest()
 	case msgBatteryReset:
 		a.resetBatteryTest()
+	case msgSaveBrightnessSchedule:
+		var schedule struct {
+			Enabled bool  `json:"enabled"`
+			Slots   []int `json:"slots"`
+		}
+		if err := json.Unmarshal([]byte(m.Contents), &schedule); err != nil {
+			a.sendError("Invalid brightness schedule", err)
+			return
+		}
+		a.mu.RLock()
+		next := a.cfg
+		a.mu.RUnlock()
+		next.BrightnessScheduleEnabled = schedule.Enabled
+		next.BrightnessSchedule = append([]int(nil), schedule.Slots...)
+		if schedule.Enabled {
+			next.UseSystemBrightness = false
+		}
+		if err := next.Normalize(); err != nil {
+			a.sendError("Invalid brightness schedule", err)
+			return
+		}
+		if err := config.Save(a.configPath, next); err != nil {
+			a.sendError("Could not save brightness schedule", err)
+			return
+		}
+		a.mu.Lock()
+		a.cfg = next
+		a.mu.Unlock()
+		if err := a.applyConfiguredBrightness(time.Now()); err != nil {
+			a.sendError("Brightness schedule could not be applied", err)
+		} else {
+			a.sendStatus("Brightness schedule saved")
+		}
+		a.signalBrightnessScheduleChanged()
+		a.sendState()
 	}
+}
+
+// brightnessScheduler applies a changed slot exactly at each half-hour edge.
+// It also wakes immediately when settings are saved, without polling and
+// spending battery between boundaries.
+func (a *app) brightnessScheduler() {
+	timer := time.NewTimer(untilNextBrightnessSlot(time.Now()))
+	defer timer.Stop()
+	for {
+		select {
+		case <-timer.C:
+			if err := a.applyConfiguredBrightness(time.Now()); err != nil {
+				log.Printf("scheduled brightness could not be applied: %v", err)
+			} else {
+				a.sendState()
+			}
+			timer.Reset(untilNextBrightnessSlot(time.Now()))
+		case <-a.brightnessScheduleChanged:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(untilNextBrightnessSlot(time.Now()))
+		case <-a.ctx.Done():
+			return
+		}
+	}
+}
+
+func untilNextBrightnessSlot(now time.Time) time.Duration {
+	next := now.Truncate(30 * time.Minute).Add(30 * time.Minute)
+	return next.Sub(now)
+}
+
+func (a *app) signalBrightnessScheduleChanged() {
+	select {
+	case a.brightnessScheduleChanged <- struct{}{}:
+	default:
+	}
+}
+
+func (a *app) applyConfiguredBrightness(at time.Time) error {
+	if a.light == nil {
+		return nil
+	}
+	a.mu.RLock()
+	cfg := a.cfg
+	a.mu.RUnlock()
+	if cfg.UseSystemBrightness {
+		return nil
+	}
+	percent := cfg.BrightnessPercent
+	if scheduled, ok := cfg.ScheduledBrightness(at); ok {
+		percent = scheduled
+	}
+	if a.light.Percent() == percent {
+		return nil
+	}
+	return a.light.SetPercent(percent)
 }
 
 func (a *app) scheduler() {
@@ -543,6 +646,10 @@ func (a *app) sendState() {
 	a.mu.RUnlock()
 	saving, percent := a.batterySaving(full)
 	state := map[string]any{"config": cfg, "api_key_configured": hasKey, "version": version, "battery_percent": percent, "wake_for_refresh_available": a.wake != nil, "battery_saving": saving, "quiet_hours_active": full.InQuietHours(time.Now())}
+	if scheduled, ok := full.ScheduledBrightness(time.Now()); ok && !full.UseSystemBrightness {
+		state["brightness_schedule_active"] = true
+		state["scheduled_brightness_percent"] = scheduled
+	}
 	if latest.Latest != "" {
 		state["update"] = latest
 	}

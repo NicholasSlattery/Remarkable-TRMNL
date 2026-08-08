@@ -16,22 +16,24 @@ import (
 const DefaultBaseURL = "https://trmnl.com"
 
 type Config struct {
-	APIKey                  string `json:"api_key,omitempty"`
-	BaseURL                 string `json:"base_url"`
-	DeviceID                string `json:"device_id,omitempty"`
-	RefreshMode             string `json:"refresh_mode"`
-	MinimumRefreshSeconds   int    `json:"minimum_refresh_seconds"`
-	FitMode                 string `json:"fit_mode"`
-	Orientation             string `json:"orientation"`
-	Invert                  bool   `json:"invert"`
-	UseSystemBrightness     bool   `json:"use_system_brightness"`
-	RestoreBrightnessOnExit bool   `json:"restore_brightness_on_exit"`
-	BrightnessPercent       int    `json:"brightness_percent"`
-	StartWithCacheOffline   bool   `json:"start_with_cache_offline"`
-	AlwaysOn                bool   `json:"always_on"`
-	WakeForRefresh          bool   `json:"wake_for_refresh"`
-	LoggingLevel            string `json:"logging_level"`
-	HistoryLimit            int    `json:"history_limit"`
+	APIKey                    string `json:"api_key,omitempty"`
+	BaseURL                   string `json:"base_url"`
+	DeviceID                  string `json:"device_id,omitempty"`
+	RefreshMode               string `json:"refresh_mode"`
+	MinimumRefreshSeconds     int    `json:"minimum_refresh_seconds"`
+	FitMode                   string `json:"fit_mode"`
+	Orientation               string `json:"orientation"`
+	Invert                    bool   `json:"invert"`
+	UseSystemBrightness       bool   `json:"use_system_brightness"`
+	RestoreBrightnessOnExit   bool   `json:"restore_brightness_on_exit"`
+	BrightnessPercent         int    `json:"brightness_percent"`
+	BrightnessScheduleEnabled bool   `json:"brightness_schedule_enabled"`
+	BrightnessSchedule        []int  `json:"brightness_schedule,omitempty"`
+	StartWithCacheOffline     bool   `json:"start_with_cache_offline"`
+	AlwaysOn                  bool   `json:"always_on"`
+	WakeForRefresh            bool   `json:"wake_for_refresh"`
+	LoggingLevel              string `json:"logging_level"`
+	HistoryLimit              int    `json:"history_limit"`
 
 	// QuietHours suppresses scheduled refreshes overnight. The window may wrap
 	// past midnight. Manual refreshes are never suppressed.
@@ -61,6 +63,8 @@ var DefaultDitherPalette = []string{"#000000", "#ffffff", "#c33124", "#e6b422", 
 const (
 	BatterySaverMultiplier = 4
 	BatterySaverMaxRefresh = 6 * time.Hour
+	BrightnessSlotsPerDay  = 48
+	BrightnessScheduleSize = 7 * BrightnessSlotsPerDay
 )
 
 func Defaults() Config {
@@ -73,6 +77,19 @@ func Defaults() Config {
 		QuietHoursStart: "23:00", QuietHoursEnd: "07:00",
 		BatterySaverPercent: 20, Dither: "off",
 	}
+}
+
+// ScheduledBrightness returns the front-light percentage assigned to at. The
+// schedule is stored row-major (one half-hour across Monday through Sunday),
+// matching the grid shown on the tablet. A value of -1 means use the default.
+func (c Config) ScheduledBrightness(at time.Time) (int, bool) {
+	if !c.BrightnessScheduleEnabled || len(c.BrightnessSchedule) != BrightnessScheduleSize {
+		return 0, false
+	}
+	day := (int(at.Weekday()) + 6) % 7 // Go starts on Sunday; the UI starts Monday.
+	slot := (at.Hour()*60 + at.Minute()) / 30
+	percent := c.BrightnessSchedule[slot*7+day]
+	return percent, percent >= 0 && percent <= 100
 }
 
 // ParseClock accepts a 24-hour HH:MM value and returns minutes past midnight.
@@ -155,6 +172,26 @@ func (c *Config) Normalize() error {
 	}
 	if c.BrightnessPercent > 100 {
 		c.BrightnessPercent = 100
+	}
+	if len(c.BrightnessSchedule) > 0 {
+		normalized := make([]int, BrightnessScheduleSize)
+		for i := range normalized {
+			normalized[i] = -1
+		}
+		copy(normalized, c.BrightnessSchedule)
+		for i, percent := range normalized {
+			if percent < -1 {
+				normalized[i] = -1
+			} else if percent > 100 {
+				normalized[i] = 100
+			}
+		}
+		c.BrightnessSchedule = normalized
+	} else {
+		c.BrightnessScheduleEnabled = false
+	}
+	if c.UseSystemBrightness {
+		c.BrightnessScheduleEnabled = false
 	}
 	if c.HistoryLimit < 5 || c.HistoryLimit > 200 {
 		c.HistoryLimit = 30

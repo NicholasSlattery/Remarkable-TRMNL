@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.2.0 - 2026-08-07
+
+### Added
+
+- **Weekly brightness schedule.** A new controls-page editor uses a
+  Monday-first grid of half-hour cells. Drag across the days and times to
+  select a range, then set its front-light level with the brightness slider.
+- The editor shows the exact selected days, time range, and percentage, and
+  performs a full e-ink refresh after selections and slider changes.
+- Scheduled brightness is applied at startup, after wake, when saved, and at
+  every half-hour boundary. Unassigned cells continue using the default
+  brightness.
+
+### Changed
+
+- Enabling the weekly schedule switches off reMarkable system-brightness mode
+  so scheduled front-light levels can take effect.
+- The on-device configuration now persists the complete weekly schedule while
+  remaining compatible with existing configuration files.
+
+### Validation
+
+- Passed Go formatting, tests, and vet checks
+- Passed QML linting
+- Completed the ARM64 build, resource compilation, and bundle validation
+
 ## 2.1.1 - 2026-08-05
 
 ## Repository and packaging improvements
